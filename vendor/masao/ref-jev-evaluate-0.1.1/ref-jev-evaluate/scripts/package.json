@@ -1,0 +1,1 @@
+{ "name": "jev-scripts", "private": true, "type": "module", "dependencies": { "ai": "^7.0.105" } }

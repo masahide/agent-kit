@@ -1,0 +1,91 @@
+{
+  "name": "skills",
+  "owner": {
+    "name": "mathbullet"
+  },
+  "metadata": {
+    "description": "Claude Code skills by mathbullet"
+  },
+  "plugins": [
+    {
+      "name": "writing-quotation",
+      "source": "./plugins/writing-quotation",
+      "description": "Formatting rules for quoting external sources inside a Markdown document. Quotations always live in code blocks (never `>`), original and translation sit together, the source reference goes on the line after the fence, and bare numeric references are forbidden.",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "documenting-with-sources",
+      "source": "./plugins/documenting-with-sources",
+      "description": "Common conventions for writing Markdown documents that cite outside sources. Defines mandatory citations, in-text reference format, separation of quotation from prose, the ban on fabricated associations, and the source-list format. Used by survey, paper-details, and other sourced-writing skills.",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "survey",
+      "source": "./plugins/survey",
+      "description": "Multi-source investigation skill that collects papers, articles, social-media posts, and industry signals on a topic into an indexed Markdown report. Includes sub-agent parallelism, Assertion-Evidence prose ordering, table-of-contents requirements, and an output convention. Depends on documenting-with-sources and writing-quotation.",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "paper-details",
+      "source": "./plugins/paper-details",
+      "description": "Produce a faithful detailed explainer of an academic paper as a Markdown document. Section structure mirrors the paper, equations render as LaTeX with explicit variable definitions, citations to the paper under review use position only, citations to other works use author-short form. The skill is for description, not critical review. Depends on documenting-with-sources and writing-quotation.",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "explain",
+      "source": "./plugins/explain",
+      "description": "Conventions for writing a Markdown explainer of a concept or system. Term list up front in table form, Mermaid for diagrams, explicit subjects and verbs, no glossed-over hops, and a fixed structure (terms / background / mechanism / procedure / current state).",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "html",
+      "source": "./plugins/html",
+      "description": "概念・仕組み・調査内容を、HTML による視覚的な説明ドキュメントとして作成・編集する。",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "ja-text-communication",
+      "source": "./plugins/ja-text-communication",
+      "description": "Principles for Japanese-language text communication with the user, meant to be consulted at the very start of any communication before writing prose. Covers term introduction, translation and Japanese phrasing, anti-compression, reference and quantity disambiguation, logic and document structure, evidence and factuality, work reporting, and reader/context retention.",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    },
+    {
+      "name": "grilling-viz",
+      "source": "./plugins/grilling-viz",
+      "description": "Turn grilling questions into self-contained HTML with selectable options, free-text answers, local persistence, and copy-and-paste handoff. Depends on grilling.",
+      "version": "1.0.0",
+      "author": {
+        "name": "mathbullet"
+      },
+      "license": "MIT"
+    }
+  ]
+}
