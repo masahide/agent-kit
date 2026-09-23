@@ -19,6 +19,11 @@ export type FormV1 = {
   conclusion: string
   /** 読者が知らない語だけ。省略可 */
   glossary?: GlossaryEntry[]
+  /**
+   * 構成案。文書の見出しと各節の要旨を書いた HTML の断片 (使える要素は `outline.ts`)。
+   * 問いは `<span data-q="<問い ID>"></span>`、表は `<div data-table="<表 ID>"></div>` の印で置く
+   */
+  outline: string
   /** テーマ (章)。1 つ以上 */
   themes: Theme[]
   /** 表。省略可 */
@@ -59,6 +64,8 @@ export type Option = {
   cons: string
   /** 推奨案。1 問に高々 1 つ */
   recommended?: boolean
+  /** この案を選んだときに、構成案の印に入る文。省略時は label */
+  preview?: string
 }
 
 export type Table = {

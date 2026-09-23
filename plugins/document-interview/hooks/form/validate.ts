@@ -1,4 +1,5 @@
 import type { FormV1 } from './form-v1'
+import { outlineErrors } from './outline'
 
 /**
  * 検証の結果。通れば `form`、落ちれば `errors` (全部) を返します。
@@ -12,6 +13,7 @@ const MIN_QUESTIONS = 2
 const MAX_QUESTIONS = 5
 const MAX_COLUMNS = 6
 const MAX_ROWS = 20
+const MAX_PREVIEW_LENGTH = 200
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -76,6 +78,7 @@ export function validateForm(input: unknown): Validation {
   }
 
   const questionIds = new Set<string>()
+  const tableIds = new Set<string>()
   const themeIds = new Set<string>()
   let questionCount = 0
 
@@ -158,6 +161,12 @@ export function validateForm(input: unknown): Validation {
             fail(`${optionAt}.recommended`, 'true か false にしてください')
           }
           if (option.recommended === true) recommendedCount += 1
+          if (
+            option.preview !== undefined &&
+            (!isFilled(option.preview) || option.preview.length > MAX_PREVIEW_LENGTH)
+          ) {
+            fail(`${optionAt}.preview`, `省略するか、${MAX_PREVIEW_LENGTH} 文字以内の空でない文字列にしてください`)
+          }
         })
         if (recommendedCount > 1) {
           fail(`${at}.options`, 'recommended: true は 1 問に 1 つまでにしてください')
@@ -176,7 +185,6 @@ export function validateForm(input: unknown): Validation {
     if (!Array.isArray(input.tables)) {
       fail('tables', '配列にしてください')
     } else {
-      const tableIds = new Set<string>()
       input.tables.forEach((table, tableIndex) => {
         const at = `tables[${tableIndex}]`
         if (!isRecord(table)) {
@@ -234,6 +242,14 @@ export function validateForm(input: unknown): Validation {
       fail('globalNote', 'オブジェクトにしてください')
     } else if (input.globalNote.label !== undefined && typeof input.globalNote.label !== 'string') {
       fail('globalNote.label', '文字列にしてください')
+    }
+  }
+
+  if (!isFilled(input.outline)) {
+    fail('outline', '構成案 (文書の見出しと各節の要旨を書いた HTML) を書いてください。空は不可です')
+  } else {
+    for (const message of outlineErrors(input.outline, [...questionIds], [...tableIds])) {
+      fail('outline', message)
     }
   }
 
