@@ -25,11 +25,6 @@ export type ReceiverInfo = {
 }
 
 /**
- * 回答が無いまま受信サーバが待つ上限 (秒)。
- */
-export const IDLE_TIMEOUT_SECONDS = 3600
-
-/**
  * `sh -c` に渡す 1 引数を単引用符で囲みます。
  */
 export const shellQuoted = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
@@ -56,12 +51,11 @@ export const cleanupArgv = (paths: Pick<ReceiverPaths, 'out' | 'portFile'>): str
 export function receiverArgv(paths: ReceiverPaths, token: string): string[] {
   const script = `${paths.pluginRoot}/scripts/receiver.py`
   const command =
-    `nohup python3 ${shellQuoted(script)} --port 0` +
+    `nohup python3 ${shellQuoted(script)}` +
     ` --port-file ${shellQuoted(paths.portFile)}` +
     ` --token ${shellQuoted(token)}` +
     ` --html ${shellQuoted(paths.html)}` +
     ` --out ${shellQuoted(paths.out)}` +
-    ` --idle-timeout ${IDLE_TIMEOUT_SECONDS}` +
     ' >/dev/null 2>&1 & echo started'
   return ['sh', '-c', command]
 }

@@ -1,5 +1,4 @@
 import type {
-  CommandSpec,
   HttpInit,
   HttpResponse,
   PaneCloseArgs,
@@ -9,7 +8,6 @@ import type {
   PromptSubmitArgs,
   PromptSubmitResult,
   TimerCall,
-  ToolSpec,
 } from 'claude-code'
 
 /**
@@ -48,10 +46,6 @@ export type Host = {
   status: (text: string | undefined) => void
   /** `$.prompt.submit` */
   submitPrompt: (input: PromptSubmitArgs) => Promise<PromptSubmitResult>
-  /** `$.tool.register` */
-  registerTool: (spec: ToolSpec) => Promise<unknown>
-  /** `$.command.register` */
-  registerCommand: (spec: CommandSpec) => Promise<unknown>
   /** `$.plugin.root` (plugin.json のあるディレクトリ、絶対パス) */
   pluginRoot: string
 }

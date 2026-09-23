@@ -65,7 +65,6 @@ type DropReason = 'cancelled' | 'replaced'
 type Pending = {
   form: FormV1
   label: string
-  token: string
   receiver: ReceiverInfo
   url: string
   linkUrl: string
@@ -83,7 +82,7 @@ type Pending = {
 /**
  * Document Interview Mod のフックを登録します。
  *
- * 状態機械 (mvp-design.md 10 章):
+ * 状態機械:
  *
  * ```
  * idle --open_form--> waiting(sync) --回答検知 (tool.call の中)--> idle  (結果 answered)
@@ -275,14 +274,12 @@ export function register(on: On) {
       uiLog: text => $.ui.log(text),
       status: text => $.ui.status(text),
       submitPrompt: input => $.prompt.submit(input),
-      registerTool: spec => $.tool.register(spec),
-      registerCommand: spec => $.command.register(spec),
       pluginRoot: $.plugin.root,
     }
     host = engine
 
     try {
-      await engine.registerTool({
+      await $.tool.register({
         name: TOOL_NAME,
         description: STRINGS.toolDescription,
         inputSchema: TOOL_INPUT_SCHEMA,
@@ -292,7 +289,7 @@ export function register(on: On) {
     }
 
     try {
-      await engine.registerCommand({
+      await $.command.register({
         name: COMMAND_NAME,
         description: STRINGS.commandDescription,
       })
@@ -356,7 +353,6 @@ export function register(on: On) {
     const current: Pending = {
       form,
       label: form.label,
-      token,
       receiver,
       url,
       linkUrl: linkUrlOf(receiver.port, token),

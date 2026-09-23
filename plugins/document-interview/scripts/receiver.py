@@ -6,7 +6,6 @@ python3 の標準ライブラリだけを使い、127.0.0.1 にだけ bind し�
 
 経路 (すべて ?t=<token> が必要。不一致は 403):
   GET  /        -> HTML (200)
-  GET  /ping    -> {"ok":true}
   GET  /wait    -> 回答が POST 済みなら即 {"answered":true}。未着なら回答の POST か
                    &timeout=<秒> (上限 WAIT_TIMEOUT_MAX 秒) の経過まで応答を保留し、
                    経過なら {"answered":false} を返す (Mod の同期待ちが使うロングポーリング)
@@ -16,7 +15,8 @@ python3 の標準ライブラリだけを使い、127.0.0.1 にだけ bind し�
 
 /wait と POST を同時に捌くため ThreadingHTTPServer を使います。
 --port-file には {"port": n, "pid": n} を JSON で書きます (tmp に書いて os.replace)。
---idle-timeout 秒のあいだ回答が無ければ終了します (保留中の /wait には {"answered":false} を返します)。
+IDLE_TIMEOUT_SECONDS 秒のあいだ回答が無ければ終了します (保留中の /wait には {"answered":false} を返します)。
+ポートは OS に選ばせます。
 """
 import argparse
 import json
@@ -29,15 +29,16 @@ from urllib.parse import parse_qs, urlparse
 # それより短い 4 秒で呼びます。ここはその上限を丸めるだけです。
 WAIT_TIMEOUT_MAX = 5.0
 
+# 回答が無いまま受信サーバが待つ上限 (秒)。
+IDLE_TIMEOUT_SECONDS = 3600
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Document Interview Mod の受信サーバ')
-    parser.add_argument('--port', type=int, default=0, help='待ち受けるポート (既定 0 = OS 任せ)')
     parser.add_argument('--port-file', required=True, help='{"port": n, "pid": n} を書くパス')
     parser.add_argument('--token', required=True, help='?t= で照合するトークン')
     parser.add_argument('--html', required=True, help='配る HTML のパス')
     parser.add_argument('--out', required=True, help='回答 JSON を書くパス')
-    parser.add_argument('--idle-timeout', type=float, default=3600, help='回答が無いまま終了するまでの秒数')
     return parser.parse_args()
 
 
@@ -96,8 +97,6 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == '/':
             return self._send(HTML, 'text/html; charset=utf-8')
-        if path == '/ping':
-            return self._send('{"ok":true}', 'application/json')
         if path == '/wait':
             # 回答済みなら即返す。未着なら POST か timeout まで保留する
             if not STATE['answered']:
@@ -132,14 +131,13 @@ class Server(ThreadingHTTPServer):
 
 
 def main():
-    server = Server(('127.0.0.1', ARGS.port), Handler)
+    server = Server(('127.0.0.1', 0), Handler)
     port = server.server_address[1]
     write_atomically(ARGS.port_file, json.dumps({'port': port, 'pid': os.getpid()}))
 
-    if ARGS.idle_timeout > 0:
-        timer = threading.Timer(ARGS.idle_timeout, server.shutdown)
-        timer.daemon = True
-        timer.start()
+    timer = threading.Timer(IDLE_TIMEOUT_SECONDS, server.shutdown)
+    timer.daemon = True
+    timer.start()
 
     try:
         server.serve_forever()
