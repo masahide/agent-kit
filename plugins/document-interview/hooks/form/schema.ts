@@ -24,6 +24,12 @@ export const FORM_SCHEMA = {
         required: ['term', 'definition'],
       },
     },
+    outline: {
+      ...nonEmptyString,
+      description:
+        '構成案。文書の見出しと各節の要旨を書いた HTML の断片 (本文は書かない)。' +
+        '問いは <span data-q="問い ID"></span>、表は <div data-table="表 ID"></div> の印で、影響する箇所に置く',
+    },
     themes: {
       type: 'array',
       minItems: 1,
@@ -52,6 +58,7 @@ export const FORM_SCHEMA = {
                       pros: { ...nonEmptyString, description: '利点 (選ぶ理由) 1 行' },
                       cons: { ...nonEmptyString, description: '代償 1 行' },
                       recommended: { type: 'boolean', description: '推奨案。1 問に 1 つまで' },
+                      preview: { type: 'string', description: 'この案を選んだときに構成案の印に入る文。省略時は label' },
                     },
                     required: ['id', 'label', 'pros', 'cons'],
                   },
@@ -92,7 +99,7 @@ export const FORM_SCHEMA = {
       properties: { label: { type: 'string' } },
     },
   },
-  required: ['schemaVersion', 'documentId', 'revision', 'label', 'title', 'conclusion', 'themes'],
+  required: ['schemaVersion', 'documentId', 'revision', 'label', 'title', 'conclusion', 'outline', 'themes'],
 } as const
 
 /**

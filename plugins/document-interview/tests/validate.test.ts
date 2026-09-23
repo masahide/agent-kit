@@ -59,16 +59,27 @@ describe('validate', () => {
   })
 
   test('themes は 1 つ以上', async () => {
-    expect(errorsOf(form => (form.themes = []))).toEqual([expect.stringContaining('themes:')])
+    expect(
+      errorsOf(form => {
+        form.themes = []
+        form.outline = '<h2>前提</h2><div data-table="tb1"></div>'
+      }),
+    ).toEqual([expect.stringContaining('themes:')])
   })
 
   test('問いは全テーマ合わせて 2〜5 問', async () => {
-    expect(errorsOf(form => form.themes.splice(1))).toEqual([expect.stringContaining('今は 1 問')])
+    expect(
+      errorsOf(form => {
+        form.themes.splice(1)
+        form.outline = form.outline.replace('<span data-q="q2"></span>', '')
+      }),
+    ).toEqual([expect.stringContaining('今は 1 問')])
 
     const six = errorsOf(form => {
       const theme = form.themes[0]!
       for (let index = 0; index < 4; index += 1) {
         theme.questions.push({ ...Fixtures.cloneForm(theme.questions[0]!), id: `x${index}` })
+        form.outline += `<p><span data-q="x${index}"></span></p>`
       }
     })
     expect(six).toEqual([expect.stringContaining('圧縮してください')])
@@ -77,6 +88,7 @@ describe('validate', () => {
       const theme = form.themes[0]!
       for (let index = 0; index < 3; index += 1) {
         theme.questions.push({ ...Fixtures.cloneForm(theme.questions[0]!), id: `x${index}` })
+        form.outline += `<p><span data-q="x${index}"></span></p>`
       }
     })
     expect(five).toEqual([])
@@ -118,9 +130,12 @@ describe('validate', () => {
   })
 
   test('ID は問い、テーマ、表それぞれで一意', async () => {
-    expect(errorsOf(form => (form.themes[1]!.questions[0]!.id = 'q1'))).toEqual([
-      expect.stringContaining('問い ID "q1" が重複'),
-    ])
+    expect(
+      errorsOf(form => {
+        form.themes[1]!.questions[0]!.id = 'q1'
+        form.outline = form.outline.replace('data-q="q2"', 'data-q="q1"')
+      }),
+    ).toEqual([expect.stringContaining('問い ID "q1" が重複')])
     expect(errorsOf(form => (form.themes[1]!.id = 't1'))).toEqual([expect.stringContaining('テーマ ID "t1" が重複')])
     expect(
       errorsOf(form => form.tables!.push({ ...Fixtures.cloneForm(form.tables![0]!) })),
@@ -131,7 +146,12 @@ describe('validate', () => {
   })
 
   test('tables は省略でき、列は 1〜6、行は 0〜20、行の長さは列数と同じ', async () => {
-    expect(errorsOf(form => delete form.tables)).toEqual([])
+    expect(
+      errorsOf(form => {
+        delete form.tables
+        form.outline = form.outline.replace('<div data-table="tb1"></div>', '')
+      }),
+    ).toEqual([])
     expect(errorsOf(form => (form.tables![0]!.columns = []))).toEqual([expect.stringContaining('tables[0].columns')])
     expect(errorsOf(form => (form.tables![0]!.columns = ['1', '2', '3', '4', '5', '6', '7']))).toEqual([
       expect.stringContaining('tables[0].columns'),
@@ -148,6 +168,60 @@ describe('validate', () => {
   test('editable は列数と同じ長さの boolean 配列で、省略できる', async () => {
     expect(errorsOf(form => delete form.tables![0]!.editable)).toEqual([])
     expect(errorsOf(form => (form.tables![0]!.editable = [true]))).toEqual([expect.stringContaining('tables[0].editable')])
+  })
+
+  test('outline (構成案) は必須で、空は落とす', async () => {
+    expect(errorsOf(form => delete (form as { outline?: string }).outline)).toEqual([
+      expect.stringContaining('outline: 構成案'),
+    ])
+    expect(errorsOf(form => (form.outline = ' '))).toEqual([expect.stringContaining('outline: 構成案')])
+  })
+
+  test('outline は使える要素と属性だけ (コメントの中は検査しない)', async () => {
+    const errors = errorsOf(form => {
+      form.outline += '<script>alert(1)</script><p class="x" onclick="y">z</p><a href="#">a</a>'
+    })
+    expect(errors).toEqual([
+      expect.stringContaining('outline: 使えない要素 <script>, <a> があります'),
+      expect.stringContaining('outline: 使えない属性があります (<p> の class, <p> の onclick)'),
+    ])
+    expect(errorsOf(form => (form.outline += '<table><tr><td colspan="2">a</td></tr></table><br/>'))).toEqual([])
+    expect(errorsOf(form => (form.outline += '<!-- <script> --><p>ok</p>'))).toEqual([])
+  })
+
+  test('印の ID は質問票にあり、問いはどれも 1 回以上、表はどれもちょうど 1 回置く', async () => {
+    expect(errorsOf(form => (form.outline = form.outline.replace('<span data-q="q2"></span>', '')))).toEqual([
+      expect.stringContaining('outline: 問い "q2" の印 <span data-q="q2"></span> がありません'),
+    ])
+    expect(errorsOf(form => (form.outline += '<p><span data-q="q9"></span></p>'))).toEqual([
+      expect.stringContaining('outline: data-q="q9" の問いがありません'),
+    ])
+    expect(errorsOf(form => (form.outline += '<p><span data-q="q1"></span></p>')), '問いの印は 2 回でもよい').toEqual([])
+    expect(errorsOf(form => (form.outline = form.outline.replace('<div data-table="tb1"></div>', '')))).toEqual([
+      expect.stringContaining('outline: 表 "tb1" の印 <div data-table="tb1"></div> がありません'),
+    ])
+    expect(errorsOf(form => (form.outline += '<div data-table="tb1"></div>'))).toEqual([
+      expect.stringContaining('outline: 表 "tb1" の印が 2 個あります'),
+    ])
+    expect(errorsOf(form => (form.outline += '<div data-table="tb9"></div>'))).toEqual([
+      expect.stringContaining('outline: data-table="tb9" の表がありません'),
+    ])
+  })
+
+  test('outline は 20000 文字まで', async () => {
+    expect(errorsOf(form => (form.outline += `<p>${'あ'.repeat(20000)}</p>`))).toEqual([
+      expect.stringContaining('outline: 20000 文字以内'),
+    ])
+  })
+
+  test('preview は省略でき、あれば 200 文字以内の空でない文字列', async () => {
+    expect(errorsOf(form => delete form.themes[0]!.questions[0]!.options[0]!.preview)).toEqual([])
+    expect(errorsOf(form => (form.themes[0]!.questions[0]!.options[0]!.preview = ' '))).toEqual([
+      expect.stringContaining('themes[0].questions[0].options[0].preview'),
+    ])
+    expect(errorsOf(form => (form.themes[0]!.questions[0]!.options[0]!.preview = 'あ'.repeat(201)))).toEqual([
+      expect.stringContaining('themes[0].questions[0].options[0].preview'),
+    ])
   })
 
   test('エラーは最初の 1 つで止めず全部返す', async () => {

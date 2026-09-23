@@ -1,6 +1,6 @@
 # 質問文の自己検査表 — ja-text-communication の規範番号順
 
-質問票 JSON を `open_form` に渡す前に、この表で自分の文を検査します。規範番号は `ja-text-communication` の SKILL.md (A〜H) のものです。対象の欄は `title`, `conclusion`, `glossary`, テーマの `name`, 問いの `title` と `cite`, 選択肢の `label`, `pros`, `cons`, 表の `title` と `columns`, `note.placeholder`, `globalNote.label` です。
+質問票 JSON を `open_form` に渡す前に、この表で自分の文を検査します。規範番号は `ja-text-communication` の SKILL.md (A〜H) のものです。対象の欄は `title`, `conclusion`, `glossary`, 構成案 `outline` の見出しと文, テーマの `name`, 問いの `title` と `cite`, 選択肢の `label`, `pros`, `cons`, `preview`, 表の `title` と `columns`, `note.placeholder`, `globalNote.label` です。
 
 Mod の検証 (`references/form-spec-v1.md`) は形しか見ません。文の意味はここで自分で検査します。この表で通っても、試問 (`references/preflight.md`) は省きません。書き手の自己判定は文脈を持っている分だけ甘いからです。
 
@@ -48,6 +48,6 @@ Mod の検証 (`references/form-spec-v1.md`) は形しか見ません。文の�
 ## 通し方
 
 1. 上から順に、質問票の全欄を対象に見ます。落ちた箇所は直します。
-2. 続けて、`references/document-lint.md` の AI 臭の検査のうち S3 (曖昧な断言)、S6 と S7 (モノを主語にした書き方と翻訳調の動詞)、S15〜S24 (語彙と記号) を、同じ欄に当てます。
+2. 続けて、`references/document-lint.md` の AI 臭の検査のうち S3 (曖昧な断言)、S6 と S7 (モノを主語にした書き方と翻訳調の動詞)、S9 (見出しは名詞句。構成案の見出しに当てる)、S15〜S24 (語彙と記号) を、同じ欄に当てます。
 3. 直した後に、問いの数がまだ 2〜5 問か、`cite` が全問にあるか、`recommended` が各問 1 つ以下かを見ます (Mod の検証で落ちる項目)。
 4. 次に `references/preflight.md` の試問へ進みます。

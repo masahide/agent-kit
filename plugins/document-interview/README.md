@@ -2,7 +2,7 @@
 
 使い方 (読み込み方、フォームの答え方、困ったとき) は [利用者ガイド](../../docs/document-interview-mod/usage.md) にあります。
 
-Document Interview Mod (MVP)。Claude が文書を書く前に、決定してほしい論点を
+Document Interview Mod (MVP)。Claude が文書を書く前に、文書の構成案と決定してほしい論点を
 質問票 JSON としてツール `open_form` に渡すと、この Mod が自己完結の HTML シートを
 `./interview/` に書き、python3 の受信サーバをローカルに立ててブラウザで開きます。
 人がブラウザで答えて [送信] を押すと、受信サーバが回答 JSON をファイルに書いて終了し、
@@ -62,9 +62,10 @@ sequenceDiagram
 | `hooks/names.ts` | plugin 名、ツール名、コマンド名、ペイン id、見出し語 |
 | `hooks/form/form-v1.ts` | 質問票 JSON スキーマ v1 と回答 JSON の型 |
 | `hooks/form/validate.ts` | 質問票の検証 (エラーを全部返す) |
+| `hooks/form/outline.ts` | 構成案の HTML で使える要素と属性 (検証と画面で共有)、構成案の検査 (使えない要素、印の過不足) |
 | `hooks/form/answer.ts` | 回答 JSON の読み取り (`documentId` と `revision` が質問票と違えば無視) |
 | `hooks/form/schema.ts` | `$.tool.register` に渡す JSON Schema |
-| `hooks/sheet/render-html.ts` | 質問票 → 自己完結 HTML (素の JS を文字列で埋める) |
+| `hooks/sheet/render-html.ts` | 質問票 → 自己完結 HTML (素の JS を文字列で埋める)。左に構成案、右に選んだものの詳細 (全体の進み具合と次に見る項目 / 決定 / 表の説明)、下に進捗と送信。構成案の HTML はブラウザで DOMParser にかけ、許可した要素と属性だけで組み直す |
 | `hooks/reply/format.ts` | 回答 JSON + 質問票 → 回答固定形 v1 |
 | `hooks/receiver/index.ts` | 受信サーバの argv、前回の回答を消す argv、port-file の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
 | `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む |
@@ -140,12 +141,12 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 
 ## スキル
 
-`skills/document-interview/SKILL.md` が Claude 側の手順です。設計書・仕様書・企画書・記事を書く (更新する) 依頼で発動し、現物把握 → 論点を 3±1 問に圧縮 → 質問文の自己検査 → 文脈ゼロの subagent への試問 → `open_form` → 回答の反映と文書の検査、の順に進めます。Mod は描画と回収だけを担います。
+`skills/document-interview/SKILL.md` が Claude 側の手順です。設計書・仕様書・企画書・記事を書く (更新する) 依頼で発動し、現物把握 → 構成案を書き、論点を 3±1 問に圧縮して構成案に印で置く → 質問文と構成案の自己検査 → 文脈ゼロの subagent への試問 → `open_form` → 回答の反映と文書の検査、の順に進めます。Mod は描画と回収だけを担います。
 
 | ファイル | 中身 |
 | --- | --- |
 | `skills/document-interview/SKILL.md` | 手順、禁則、`open_form` の結果 (`answered` / `pending` / `cancelled` / `invalid` / `failed`) ごとの動き、Mod が無いときの案内、証跡と完了報告 |
-| `references/form-spec-v1.md` | 質問票 JSON の書き方 (`hooks/form/validate.ts` の全規則とエラー文、完全な例) |
+| `references/form-spec-v1.md` | 質問票 JSON の書き方 (`hooks/form/validate.ts` の全規則とエラー文、構成案の HTML の規則、完全な例) |
 | `references/reply-format-v1.md` | 回答固定形 v1 の契約と読み方 (`hooks/reply/format.ts` のゴールデンと一致) |
 | `references/question-lint.md` | ja-text-communication の規範番号順の自己検査表 |
 | `references/document-lint.md` | 回答を反映して書く文書の検査表。ja-text-communication の規範と、stop-ai-slop-jp と humanizer-ja から選んだ AI 臭の検査 (S1〜S24)、採用しなかった規則と理由 |

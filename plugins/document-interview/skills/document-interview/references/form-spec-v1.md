@@ -13,6 +13,7 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
   "title": "<主張のタイトル>",
   "conclusion": "結論: <3 文以内>",
   "glossary": [ { "term": "<語>", "definition": "<1 行の定義>" } ],
+  "outline": "<構成案の HTML。問いは <span data-q=\"<問い ID>\"></span>、表は <div data-table=\"<表 ID>\"></div> で置く>",
   "themes": [
     {
       "id": "<テーマ ID>",
@@ -23,8 +24,8 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
           "title": "<問いの 1 文>",
           "cite": "<根拠: file:line か実行結果の引用>",
           "options": [
-            { "id": "A", "label": "<選択肢>", "pros": "<利点 1 行>", "cons": "<代償 1 行>", "recommended": true },
-            { "id": "B", "label": "<選択肢>", "pros": "<利点 1 行>", "cons": "<代償 1 行>" }
+            { "id": "A", "label": "<選択肢>", "pros": "<利点 1 行>", "cons": "<代償 1 行>", "recommended": true, "preview": "<この案を選んだときに構成案の印に入る文>" },
+            { "id": "B", "label": "<選択肢>", "pros": "<利点 1 行>", "cons": "<代償 1 行>", "preview": "<同上>" }
           ],
           "note": { "placeholder": "<補足欄の placeholder>" }
         }
@@ -38,7 +39,9 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
 }
 ```
 
-必須は `schemaVersion`, `documentId`, `revision`, `label`, `title`, `conclusion`, `themes` です。`glossary`, `tables`, `globalNote`, 各問の `note`, 各選択肢の `recommended`, 各表の `editable` は省略できます。
+必須は `schemaVersion`, `documentId`, `revision`, `label`, `title`, `conclusion`, `outline`, `themes` です。`glossary`, `tables`, `globalNote`, 各問の `note`, 各選択肢の `recommended` と `preview`, 各表の `editable` は省略できます。
+
+フォームの左には `title`、`conclusion`、`glossary` と構成案 (`outline`) が出ます。構成案の中の印 (問いと表) を人が押すと、右にその問いの選択肢や表の説明が出ます。
 
 ## 欄ごとの規則
 
@@ -61,6 +64,22 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
 | `conclusion` | 文字列 | 空でない。`結論:` で始め、3 文以内 (文の数は検証しない。書き手の規律) | `conclusion: 空でない文字列にしてください` |
 | `glossary` | 配列 | 省略可。読者が知らない語だけ。各要素はオブジェクトで `term` と `definition` がどちらも空でない | `glossary: 配列にしてください` / `glossary[0]: オブジェクトにしてください` / `glossary[0].term: 空でない文字列にしてください` / `glossary[0].definition: 空でない文字列にしてください` |
 
+### 構成案
+
+これから書く文書の見出しと各節の要旨を、HTML の断片 (`body` の中身にあたる部分) で書きます。未確定事項 (問い) と、人に埋めてもらう表は、構成案の中の置き場所に印で置きます。
+
+| 欄 | 型 | 規則 | 落ちたときのエラー文 |
+|---|---|---|---|
+| `outline` | 文字列 | 空でない。20000 文字以内 | `outline: 構成案 (文書の見出しと各節の要旨を書いた HTML) を書いてください。空は不可です` / `outline: 20000 文字以内にしてください (今は 20412 文字)。本文ではなく見出しと各節の要旨だけを書きます` |
+| 要素 | | 使えるのは `h2`, `h3`, `h4`, `p`, `ul`, `ol`, `li`, `dl`, `dt`, `dd`, `table`, `caption`, `thead`, `tbody`, `tr`, `th`, `td`, `strong`, `em`, `code`, `pre`, `blockquote`, `br`, `hr`, `span`, `div` だけ。`<!-- -->` のコメントの中は検査しない | `outline: 使えない要素 <script>, <a> があります。使えるのは h2, h3, ... です` |
+| 属性 | | 使えるのは `span` の `data-q`、`div` の `data-table`、`th` と `td` の `colspan` と `rowspan` だけ。`class`, `style`, `id`, `on〜` も使えない | `outline: 使えない属性があります (<p> の class)。使えるのは span の data-q、div の data-table、th と td の colspan と rowspan だけです` |
+| 問いの印 | | `<span data-q="<問い ID>"></span>`。**どの問いも 1 回以上置く**。同じ問いを 2 か所に置いてもよい。印の ID は問いの `id` と同じにする | `outline: 問い "q2" の印 <span data-q="q2"></span> がありません。未確定事項は、構成案の中のその決定で文が変わる箇所に置いてください` / `outline: data-q="q9" の問いがありません。印の ID は問いの id と同じにしてください` |
+| 表の印 | | `<div data-table="<表 ID>"></div>`。**どの表もちょうど 1 回置く** | `outline: 表 "tb1" の印 <div data-table="tb1"></div> がありません。表を置く節に 1 つ置いてください` / `outline: 表 "tb1" の印が 2 個あります。1 つにしてください` / `outline: data-table="tb9" の表がありません。印の ID は表の id と同じにしてください` |
+
+画面では、問いの印は番号付きの文になります。未選択の間は推奨案の `preview` (無ければ `label`) を灰色の破線で出し、選ぶと選んだ案の文に変わります。推奨案の無い問いは、選択肢の `label` を ` / ` でつないで出します。表の印の位置には、`tables` の表が入力欄付きで入ります。
+
+Mod は構成案の HTML をそのまま画面に差し込みません。ブラウザが HTML を解析し、上の要素と属性だけで組み直して描きます。検証を通っていれば、見た目は書いたとおりになります。
+
 ### テーマと問い
 
 | 欄 | 型 | 規則 | 落ちたときのエラー文 |
@@ -68,7 +87,7 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
 | `themes` | 配列 | 1 つ以上 | `themes: テーマを 1 つ以上にしてください` |
 | `themes[i]` | オブジェクト | | `themes[0]: オブジェクトにしてください` |
 | `themes[i].id` | 文字列 | 空でない。テーマ間で一意 | `themes[0].id: 空でない文字列にしてください` / `themes[1].id: テーマ ID "t1" が重複しています` |
-| `themes[i].name` | 文字列 | 空でない。フォームの見出しになる | `themes[0].name: 空でない文字列にしてください` |
+| `themes[i].name` | 文字列 | 空でない。フォームの右で、問いの上に小さく出る | `themes[0].name: 空でない文字列にしてください` |
 | `themes[i].questions` | 配列 | 配列であること。テーマ単位の下限は無いが、**全テーマ合計で 2〜5 問** | `themes[0].questions: 配列にしてください` / `themes: 問いは全テーマ合わせて 2〜5 問にしてください (今は 1 問)。決定だけを問う形に整理してください` / `themes: 問いは全テーマ合わせて 2〜5 問にしてください (今は 6 問)。圧縮してください` |
 | `questions[j]` | オブジェクト | | `themes[0].questions[0]: オブジェクトにしてください` |
 | `questions[j].id` | 文字列 | 空でない。**全テーマを通して一意** (テーマが違っても同じ ID は不可) | `themes[1].questions[0].id: 問い ID "q1" が重複しています` |
@@ -86,7 +105,8 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
 | `options[k].label` | 文字列 | 空でない。選択肢の名前 | `...options[0].label: 空でない文字列にしてください` |
 | `options[k].pros` | 文字列 | 空でない。利点 (この案を選ぶ理由) を 1 行 | `...options[0].pros: 利点 (選ぶ理由) を 1 行書いてください` |
 | `options[k].cons` | 文字列 | 空でない。代償を 1 行 | `...options[0].cons: 代償を 1 行書いてください` |
-| `options[k].recommended` | 真偽値 | 省略可。`true` は **1 問に高々 1 つ**。フォームに「推奨」バッジが付き、未選択のときの確定案になる | `...options[0].recommended: true か false にしてください` / `themes[0].questions[0].options: recommended: true は 1 問に 1 つまでにしてください` |
+| `options[k].recommended` | 真偽値 | 省略可。`true` は **1 問に高々 1 つ**。フォームに「AI の推奨」の印が付き、未選択のときの確定案になる | `...options[0].recommended: true か false にしてください` / `themes[0].questions[0].options: recommended: true は 1 問に 1 つまでにしてください` |
+| `options[k].preview` | 文字列 | 省略可。この案を選んだときに、構成案の印の位置に入る文。200 文字以内。省略すると `label` が入る | `...options[0].preview: 省略するか、200 文字以内の空でない文字列にしてください` |
 
 ### 表
 
@@ -115,6 +135,11 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
 ## 書き手の規律 (検証はしないが守ること)
 
 - `title` と `conclusion` は結論ファーストで書きます。読者が最初に見るのは結論ボックスです。
+- 構成案 (`outline`) は、見出しと各節の要旨 (1 節 3 文以内) までにします。本文は書きません。本文は回答を受け取ってから書きます。
+- 構成案の見出しは、節の名前 (名詞句) にします。表の題 (`tables[i].title`) は表の上に出るので、同じ語を見出しで繰り返しません。
+- 問いの印は、その決定で文が変わる箇所に置きます。文書全体に関わる問いは、冒頭の「前提」の節に置きます。
+- `preview` は、印の前後の文とつながる形で書きます。印が文の途中にあるなら語句 (`90 日`)、段落の頭にあるなら文 (`既存ユーザーは、初回ログイン時に自動で移行します。`) にします。語句で足りるなら `preview` を省いて `label` を使います。
+- 問いの並び (テーマ順 → 問い順) は、構成案の中の印の順に合わせます。画面の番号と回答固定形の `Qn.` がこの並びで振られるので、構成案を上から読んだときに ① ② ③ の順に並びます。
 - 各問は自己完結のカードにします。問いの 1 文、根拠、各選択肢の利点と代償だけで答えられる形にします。判断に要る数値は `cite` に単位付きで再掲します。
 - 問いの文に `q1` や `tb1` のような ID、コード内の変数名、Claude が作った略語を出しません。人はそれを知りません。
 - `glossary` は読者が知らない語だけです。定義済みの語は問いの文でそのまま使えます。
@@ -135,6 +160,7 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
   "glossary": [
     { "term": "OIDC", "definition": "OpenID Connect。OAuth 2.0 の上で認証を行う標準です。" }
   ],
+  "outline": "<h2>前提</h2>\n<p>対象は、自前のセッションでログインしている既存ユーザーです。</p>\n<h2>移行</h2>\n<p><span data-q=\"q1\"></span>移行期間は 2 週間で、期間が過ぎたら自前のセッションの発行を止めます。</p>\n<h2>運用</h2>\n<p>監査ログは <span data-q=\"q2\"></span> 保持します。</p>\n<h2>画面</h2>\n<p>ログインが要る画面を、次の表で決めます。</p>\n<div data-table=\"tb1\"></div>",
   "themes": [
     {
       "id": "t1",
@@ -145,8 +171,8 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
           "title": "既存ユーザーの移行をどう扱いますか",
           "cite": "src/auth/session.ts:40-88 に自前セッションの発行があります",
           "options": [
-            { "id": "A", "label": "初回ログイン時に自動移行", "pros": "利用者の操作が増えません", "cons": "移行失敗時の切り分けが難しくなります", "recommended": true },
-            { "id": "B", "label": "全員に再登録を求める", "pros": "実装が単純です", "cons": "離脱が増えます" }
+            { "id": "A", "label": "初回ログイン時に自動移行", "pros": "利用者の操作が増えません", "cons": "移行失敗時の切り分けが難しくなります", "recommended": true, "preview": "既存ユーザーは、初回ログイン時に自動で移行します。" },
+            { "id": "B", "label": "全員に再登録を求める", "pros": "実装が単純です", "cons": "離脱が増えます", "preview": "既存ユーザーには、全員に再登録を求めます。" }
           ],
           "note": { "placeholder": "補足があれば 1 行で" }
         }
