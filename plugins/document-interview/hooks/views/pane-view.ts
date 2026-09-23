@@ -12,8 +12,8 @@ export type PaneKit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Li
  * ペインが表示する状態。
  */
 export type PaneModel = {
-  label: string
-  revision: number
+  /** 1 行目 (`インタビュー: <label>  (rev <revision>)` か `指摘: <label>  (rev <revision>)`) */
+  heading: string
   /** 127.0.0.1 の URL (文字で出す。コピー用) */
   url: string
   /** `Link` に置く localhost の URL (`Link` の href は https: か http://localhost のみ) */
@@ -34,7 +34,7 @@ export type PaneActions = {
  * 待機中のペイン。8 行以内です。
  *
  * ```
- * インタビュー: <label>  (rev <revision>)
+ * インタビュー: <label>  (rev <revision>)   ← 指摘の画面では 指摘: <label>  (rev <revision>)
  * ブラウザで回答してください:
  * http://127.0.0.1:<port>/?t=<token>
  * リンクで開く (localhost)              ← Link (terminal は OSC 8、desktop はアンカー)
@@ -50,7 +50,7 @@ export function paneView(kit: PaneKit, model: PaneModel, actions: PaneActions): 
     paddingLeft: 1,
     paddingRight: 1,
     children: [
-      Text({ bold: true, children: STRINGS.headerOf(model.label, model.revision) }),
+      Text({ bold: true, children: model.heading }),
       Text({ children: STRINGS.answerInBrowser }),
       Text({ wrap: 'wrap', children: model.url }),
       Link({ href: model.linkUrl, label: STRINGS.openLink }),

@@ -1,7 +1,7 @@
 {
   "name": "document-interview",
   "version": "0.1.0",
-  "description": "Document Interview Mod: Claude が質問票 JSON を open_form ツールに渡すと、ブラウザに一枚のフォームを出して人に答えてもらい、回答を【インタビュー回答】の固定形にして Claude に届ける (waitSeconds 以内ならツールの結果として、過ぎれば user turn として)。",
+  "description": "Document Interview Mod: Claude が質問票 JSON を open_form ツールに渡すと、ブラウザに一枚のフォームを出して人に答えてもらい、回答を【インタビュー回答】の固定形にして Claude に届ける (waitSeconds 以内ならツールの結果として、過ぎれば user turn として)。書き上げた文書を open_review に渡すと、人が段落や文字列に付けた指摘を同じ固定形で届ける (指摘モード)。",
   "author": {
     "name": "agent-kit"
   }

@@ -102,6 +102,20 @@ export const FORM_SCHEMA = {
   required: ['schemaVersion', 'documentId', 'revision', 'label', 'title', 'conclusion', 'outline', 'themes'],
 } as const
 
+const OPEN_BROWSER = {
+  type: 'boolean',
+  description: 'false ならブラウザを起動せず URL だけ返す (既定 true)',
+} as const
+
+const WAIT_SECONDS = {
+  type: 'integer',
+  minimum: 0,
+  maximum: 1800,
+  description:
+    'ツール呼び出しの中で回答を待つ上限 (秒)。既定 300。0 なら待たずに pending を返す。' +
+    '上限までに回答が届けば status "answered" と reply (回答固定形) を返す',
+} as const
+
 /**
  * ツール `open_form` の入力全体。
  */
@@ -109,18 +123,49 @@ export const TOOL_INPUT_SCHEMA = {
   type: 'object',
   properties: {
     form: FORM_SCHEMA,
-    openBrowser: {
-      type: 'boolean',
-      description: 'false ならブラウザを起動せず URL だけ返す (既定 true)',
-    },
-    waitSeconds: {
-      type: 'integer',
-      minimum: 0,
-      maximum: 1800,
-      description:
-        'ツール呼び出しの中で回答を待つ上限 (秒)。既定 300。0 なら待たずに pending を返す。' +
-        '上限までに回答が届けば status "answered" と reply (回答固定形) を返す',
-    },
+    openBrowser: OPEN_BROWSER,
+    waitSeconds: WAIT_SECONDS,
   },
   required: ['form'],
+} as const
+
+/**
+ * 指摘の画面 (skills/document-interview/references/review-mode.md) の `review`。
+ * 文書の本文は入力に載せず、Claude が `interview/<label>.doc.html` に書き出したものを Mod が読みます。
+ */
+export const REVIEW_SCHEMA = {
+  type: 'object',
+  description: '指摘の画面 v1。文書の HTML は interview/<label>.doc.html に先に書き出しておく',
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    documentId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$', description: '文書の識別子 (質問票と同じでよい)' },
+    revision: { type: 'integer', minimum: 1, description: '同じ文書の何回目の指摘の画面か' },
+    label: {
+      type: 'string',
+      pattern: '^[A-Za-z0-9_-]{1,64}$',
+      description: '画面の名前。文書の HTML を interview/<label>.doc.html から読み、証跡を interview/<label>.* に書く',
+    },
+    title: { ...nonEmptyString, description: '画面の上に出す文書の題名' },
+    source: { type: 'string', description: '元の文書のパス (人に見せるだけ)' },
+    part: {
+      type: 'object',
+      description: '長い文書を分けて出すときの、何回目か (index) と全部で何回か (total)',
+      properties: { index: { type: 'integer', minimum: 1 }, total: { type: 'integer', minimum: 2 } },
+      required: ['index', 'total'],
+    },
+  },
+  required: ['schemaVersion', 'documentId', 'revision', 'label', 'title'],
+} as const
+
+/**
+ * ツール `open_review` の入力全体。
+ */
+export const REVIEW_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    review: REVIEW_SCHEMA,
+    openBrowser: OPEN_BROWSER,
+    waitSeconds: WAIT_SECONDS,
+  },
+  required: ['review'],
 } as const

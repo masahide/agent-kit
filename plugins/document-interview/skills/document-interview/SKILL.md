@@ -1,14 +1,16 @@
 ---
 name: document-interview
-description: 設計書・仕様書・企画書・記事を書く前、または既存の文書を更新する前に、文書の構成案と、人に決めてもらう論点 2〜5 問を質問票にまとめ、ツール open_form でブラウザのフォームとして人に見せ、届いた回答を反映して文書を書く。「仕様書を書いて」「設計書を作りたい」「企画書をまとめて」「記事を書いて」「この文書を更新して」「書く前に確認して」「インタビューして」で発動する。事実で決まることは自分で調べ、好み・優先度・トレードオフの裁定だけを人に聞く。
+description: 設計書・仕様書・企画書・記事を書く前、または既存の文書を更新する前に、文書の構成案と、人に決めてもらう論点 2〜5 問を質問票にまとめ、ツール open_form でブラウザのフォームとして人に見せ、届いた回答を反映して文書を書く。「仕様書を書いて」「設計書を作りたい」「企画書をまとめて」「記事を書いて」「この文書を更新して」「書く前に確認して」「インタビューして」で発動する。事実で決まることは自分で調べ、好み・優先度・トレードオフの裁定だけを人に聞く。この Mod を使うと宣言されたセッションでは、書き上げた文書をツール open_review で人に見せ、段落への指摘を受けて直してから完了報告する。
 ---
 
 # document-interview — 文書を書く前に、決定だけを一枚のフォームで聞く
 
 文書を書く前に Claude が構成案を書き、論点を整理し、質問票 JSON をツール `mcp__document-interview__open_form` に渡します。Mod (Claude Mods の plugin `document-interview`) がブラウザに一枚のフォームを出します。左に構成案が出て、未確定事項 (問い) には番号付きの印が付きます。人が印を押すと、右に選択肢と AI の推奨が出ます。人が答えて [送信] を押すと、回答が `【インタビュー回答】` で始まる固定形で届きます。届き方は 2 つです。ツールは `waitSeconds` (既定 300 秒) まで呼び出しの中で回答を待ち、届けばツールの結果 (`status: "answered"` の `reply`) で返します。上限までに届かなければ `status: "pending"` で返り、あとで user turn として届きます。Claude はその回答を反映して文書を書きます。
 
+人がこの Mod を使うと宣言したセッションでは、書き上げた文書を HTML にしてツール `mcp__document-interview__open_review` に渡し、指摘の画面を出します (指摘モード)。人は段落や文字列にチップとコメントで指摘を付け、指摘は同じ `【インタビュー回答】` の固定形で届きます。Claude は指摘を反映してから完了報告に進みます。
+
 **Input**: 文書作成・更新の依頼と、現物 (既存の文書、コード、実行結果)。
-**Output**: 質問票 (`interview/<label>.json`)、人の回答 (`interview/<label>.md`)、それらを反映した文書。
+**Output**: 質問票 (`interview/<label>.json`)、人の回答 (`interview/<label>.md`)、それらを反映した文書。指摘モードでは、指摘の画面に出した文書の HTML (`interview/<label>.doc.html`) と人の指摘 (`interview/<label>.md`) も残ります。
 
 ## 最重要禁則 (先に読む)
 
@@ -17,6 +19,7 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 - **問いは 3±1 問 (2〜5 問)。** Mod は 6 問以上と 1 問以下を検証で落とします。人の判断コストが本体です。
 - **非推奨の選択肢にも「選ぶ理由」を書く。** 各選択肢に `pros` (利点) と `cons` (代償) を 1 行ずつ書きます。利点が書けない選択肢しか無い問いは実質 1 択なので、問いを落として推奨案で進めます。
 - **正解が一意で自己検証できることは聞かない。** 好みや曖昧な仕様が左右する判断だけに使います。
+- **指摘の画面を出したら、指摘が届く前に完了報告しない。** `open_review` が `pending` を返したら、文書を直さずにターンを終えて待ちます。
 - **試問の結果を受け取る前に `open_form` を呼ばない。** 文脈ゼロの subagent に読ませて伝わるかを確かめてから人に見せます。
 
 ## 手順
@@ -28,6 +31,7 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 5. **`open_form` を呼び、結果で分岐する** — 下の「open_form の呼び方と結果」のとおりに呼びます。ツールは既定で 300 秒まで回答を待ちます。`answered` が返ったら `reply` が回答です。手順 6 へ進みます。`pending` が返ったら、人に「ブラウザのフォームで答えて [送信] を押してください。閉じてしまったら `/interview` で開き直せます」と伝えて応答を終えます。回答は `【インタビュー回答】<documentId>` で始まる user turn として届きます。届くまで文書を書きません。
 6. **回答の反映** — 届いた固定形 (`answered` の `reply`、または user turn) を `references/reply-format-v1.md` の規則で読みます。お任せ (未選択) の問いは推奨案で確定します。補足と全体へのコメントは一字一句そのまま扱います。文書は、質問票の構成案の節立てに沿って書きます。文書を書く前に `references/document-lint.md` を Read し、1 章 (読者、冒頭の一文、各節で言い切る決定、質問票から引き継ぐもの) を決めます。書いた後は同じファイルの 5 章の順に検査して直します。文書の冒頭か末尾に「決定事項」として、各問の決定とお任せで確定した項目を書きます。
 7. **2 枚目 (必要なら)** — 回答で設計が変わり、新しい論点が生まれたときだけ、同じ `documentId` で `revision` を進めた質問票を作ります。`label` は必ず変えます (例: `spec-auth-01` → `spec-auth-01-r2`)。同じ `label` を使うと前の質問票の証跡 `interview/<label>.*` が上書きされます (Mod は起動前に前回の `.answer.json` を消し、`documentId` と `revision` が違う回答を無視するので、古い回答を拾うことはありません)。捨てた案は文書に残します (「採用しなかった案」の節)。
+8. **指摘モード (宣言があるとき、または人が頼んだとき)** — `references/review-mode.md` を Read し、その手順で進めます。宣言かどうかは会話を読んで判定します (スラッシュコマンド `/document-interview:document-interview` でスキルを呼んだとき、または「この Mod でやろう」のように文で頼んだとき)。書き上げた文書を許可リストの HTML に変換して `interview/<label>.doc.html` に書き出し、`open_review` を呼びます。結果の分岐は `open_form` と同じです。`pending` なら文書を直さず、完了報告もせずにターンを終えます。届いた指摘を反映し、完了報告へ進みます。10 万文字を超える文書は、節の切れ目で分けて何回かの画面に出します。
 
 ## open_form の呼び方と結果
 
@@ -45,28 +49,29 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 |---|---|---|
 | `answered` | `documentId`, `revision`, `reply` (回答固定形。`【インタビュー回答】<documentId>` で始まる), `files: { form, html, answer, md }`。context に「reply が人の回答です。user turn は届きません。reply を回答として読み、文書の作成に進んでください。」が付く | `reply` をそのまま回答として扱い、手順 6 へ進みます。user turn は届きません (待つ必要はありません) |
 | `pending` | `documentId`, `revision`, `url`, `files: { form, html }`, `wait: { seconds, endedBy }` (`endedBy` は `timeout` = 上限到達、`abort` = 人が中断、`receiverLost` = 受信サーバに届かない、`skipped` = `waitSeconds: 0`)。context に「質問票をブラウザに出しました。回答は後で【インタビュー回答】で始まる user turn として届きます。それまで文書を書かず、このターンを終えてください。」が付く | ブラウザは Mod が開いています。人に「フォームで答えて [送信] を押してください」と伝え、**ターンを終えます**。回答は user turn として届きます。届いたら手順 6 へ |
-| `cancelled` | `documentId`, `revision`, `reason` (「人が [取り消す] を押しました」か「別の質問票の open_form で差し替えられました」) | 何も届きません。人に取り消しを確認したことを伝え、次の指示を待ちます。質問票を直して出し直すかは人に聞きます |
+| `cancelled` | `documentId`, `revision`, `reason` (「人が [取り消す] を押しました」か「別の open_form か open_review で差し替えられました」) | 何も届きません。人に取り消しを確認したことを伝え、次の指示を待ちます。質問票を直して出し直すかは人に聞きます |
 | `invalid` | `errors: string[]`。各要素は `<パス>: <直し方>` (例: `themes[0].questions[1].cite: 根拠 (file:line か実行結果の引用) を書いてください。空は不可です`)。エラーは全部まとめて返る | `errors` を全部直して、同じツールをもう一度呼びます。人には見せません。問いの数のエラー (`圧縮してください`) は問いを減らして直します。3 回続けて `invalid` なら、質問票を人に Markdown で見せて相談します |
 | `failed` | `reason`, `files: { form, html }`。`reason` は「Python 3 (python3、python、py -3 のどれか) が見つからないため受信サーバを起動できませんでした」「受信サーバが 3 秒以内に起動しませんでした」「受信サーバを起動できませんでした (...)」のどれかに、「HTML は <絶対パス> に書いてあります。人に file:// で開いて回答してもらい、[送信] で出る JSON をチャットに貼ってもらってください。」が続く | `reason` の代替導線をそのまま人に案内し、ターンを終えます。人が貼った回答 JSON は `references/reply-format-v1.md` の「回答 JSON」の節の形です。Claude が自分で固定形の規則に当てはめて読み、手順 6 へ進みます。`session.start がまだ実行されていません` の `failed` (files 無し) は、セッションを開き直してもらいます |
 
 注意:
 
 - ツールが回答を待っている間、Claude のターンは進みません (ツールの結果を待っている状態です)。人が Esc で中断すると `pending` (`endedBy: "abort"`) で戻ります。回答はそのあとも受け付けられ、user turn として届きます。
-- 待機中 (`pending` のあと) にもう一度 `open_form` を呼ぶと、Mod は前の質問票を取り消して (受信サーバを止めて) 新しい質問票に切り替えます。人が答えている最中に呼び直してはいけません。
+- 待機中 (`pending` のあと) にもう一度 `open_form` か `open_review` を呼ぶと、Mod は前の画面を取り消して (受信サーバを止めて) 新しい画面に切り替えます。人が答えている最中に呼び直してはいけません。
 - 人がペインを閉じても Mod は回答を待ち続けます。ブラウザを閉じてしまったときは `/interview` で開き直せます (人に伝える文言)。
 - 人が [取り消す] を押すと、ツールが待っている間なら `cancelled` が返ります。`pending` のあとなら Claude には何も届きません。次のターンで人の指示を待ちます。
 
 ## Mod が読み込まれていないとき
 
-使えるツールの一覧に `mcp__document-interview__open_form` が無ければ、Mod が読み込まれていません。質問票を出さずに止まり、人に「Document Interview Mod が読み込まれていません」と伝えて、利用者ガイド (agent-kit の `docs/document-interview-mod/usage.md`) の 4 章「Mod を読み込む」を案内します。
+使えるツールの一覧に `mcp__document-interview__open_form` (指摘モードでは `mcp__document-interview__open_review`) が無ければ、Mod が読み込まれていません。質問票を出さずに止まり、人に「Document Interview Mod が読み込まれていません」と伝えて、利用者ガイド (agent-kit の `docs/document-interview-mod/usage.md`) の 4 章「Mod を読み込む」を案内します。
 
 ## 証跡ファイル
 
-Mod はセッションの作業ディレクトリの下 `interview/` に、質問票の `label` ごとに書きます。
+Mod はセッションの作業ディレクトリの下 `interview/` に、質問票と指摘の画面の `label` ごとに書きます。
 
 | ファイル | 中身 | 書く側 |
 |---|---|---|
-| `interview/<label>.json` | 検証済みの質問票 | Mod |
+| `interview/<label>.json` | 検証済みの質問票 (指摘の画面では検証済みの `review`) | Mod |
+| `interview/<label>.doc.html` | 指摘の画面に出す文書の HTML (指摘モードだけ) | Claude |
 | `interview/<label>.html` | 自己完結の HTML シート (`file://` でも開ける) | Mod |
 | `interview/<label>.port.json` | 受信サーバの `{"port", "pid"}` | 受信サーバ |
 | `interview/<label>.answer.json` | ブラウザが送った回答 JSON (同じ label の前回のものは `open_form` が起動前に消す) | 受信サーバ |
@@ -84,6 +89,7 @@ Mod はセッションの作業ディレクトリの下 `interview/` に、質�
 - 各問の決定 (お任せで確定した項目は「推奨案で確定」と明記)
 - 構成案から変えた節があれば、その節と変えた理由
 - 人に確認していない仮定があればその一覧
+- 指摘モードで指摘を受けたときは、指摘ごとに直した箇所か直さなかった理由と、`interview/<label>.doc.html` と `interview/<label>.md` (`references/review-mode.md` の 6 章)
 
 反映後の文書やコードの commit は、人に確認してから行います。
 
@@ -94,3 +100,4 @@ Mod はセッションの作業ディレクトリの下 `interview/` に、質�
 - `references/question-lint.md` — 質問文の自己検査表 (ja-text-communication の規範番号順)
 - `references/document-lint.md` — 文書の検査表 (ja-text-communication の規範と AI 臭の検査)。回答を反映して文書を書く前に Read
 - `references/preflight.md` — 試問の手順、質問票の Markdown の形、subagent に渡すプロンプトの雛形、打ち切り規則
+- `references/review-mode.md` — 指摘モード。宣言の判定、文書の HTML の書き方、`open_review` の入力と結果、長い文書の分け方、指摘の回答の読み方、反映と完了報告。手順 8 の前に Read
