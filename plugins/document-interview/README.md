@@ -16,9 +16,9 @@ Mod がそれを回答固定形 (`【インタビュー回答】` で始まる�
 
 指摘モード: Claude が書き上げた文書を HTML にして `interview/<label>.doc.html` に書き出し、
 ツール `open_review` を呼ぶと、この Mod がそのファイルを検査して指摘の画面を出します。
-人は段落や文字列にチップ (短くする、根拠が要る、ここは良い など 9 種) とコメントで指摘を付けます。
+人は段落や文字列にチップ (短くする、根拠が要る、ここは良い など 9 種) とコメントで指摘を付け、段落をその場で書き換え、消し、足し、動かせます (添削)。
 受信サーバ、同期待ち、監視、ペインは `open_form` と同じで、指摘は同じ `【インタビュー回答】` の固定形の
-`## 指摘` の節で届きます。
+`## 指摘` と `## 書き換え` の節で届きます。
 
 背景と決定の記録は [docs/document-interview-mod/plan.md](../../docs/document-interview-mod/plan.md) にあります。
 対象は Claude Code 2.1.278 の Claude Mods (function hooks、早期アクセス) です。
@@ -73,13 +73,13 @@ sequenceDiagram
 | `hooks/form/schema.ts` | `$.tool.register` に渡す JSON Schema |
 | `hooks/sheet/render-html.ts` | 質問票 → 自己完結 HTML (素の JS を文字列で埋める)。左に構成案、右に選んだものの詳細 (全体の進み具合と次に見る項目 / 決定 / 表の説明)、下に進捗と送信。構成案の HTML はブラウザで DOMParser にかけ、許可した要素と属性だけで組み直す |
 | `hooks/sheet/common.ts` | 2 つの画面が共有する CSS と、HTML と JSON の逃がし |
-| `hooks/sheet/render-review.ts` | 指摘の画面 → 自己完結 HTML。左に文書 (DOMParser で解析し、許可した要素と属性だけで組み直す)、段落に上から番号を振る。右に全体 (指摘の数と一覧、全体へのコメント) か、選んだ段落の指摘の操作 (チップ、コメント、この段落の指摘) |
+| `hooks/sheet/render-review.ts` | 指摘の画面 → 自己完結 HTML。左に文書 (DOMParser で解析し、許可した要素と属性だけで組み直す)、段落に上から番号を振る。右に全体 (指摘と書き換えの数と一覧、全体へのコメント) か、選んだ段落の操作 (チップ、コメント、この段落の指摘、書き換え・削除・移動・追加)。書き換えた段落は左に書き換えた後の文を出す |
 | `hooks/reply/format.ts` | 回答 JSON + 質問票 → 回答固定形 v1 |
-| `hooks/review/review-v1.ts` | 指摘の画面 (`review`) と指摘の回答 JSON の型、チップ 9 種 |
+| `hooks/review/review-v1.ts` | 指摘の画面 (`review`) と指摘の回答 JSON の型 (指摘と添削)、チップ 9 種 |
 | `hooks/review/validate-review.ts` | `review` の検証 (エラーを全部返す) |
 | `hooks/review/document.ts` | 文書の HTML の検査 (構成案と同じ要素、属性は表の colspan と rowspan だけ、10 万文字まで、段落が 1 つ以上) と、段落番号を振る要素 |
-| `hooks/review/answer.ts` | 指摘の回答 JSON の読み取り (`kind`、`documentId`、`revision` が違えば無視、形の違う指摘は捨てる) |
-| `hooks/review/format.ts` | 指摘の回答 JSON → 回答固定形 (`## 指摘` と `## 指摘した段落`) |
+| `hooks/review/answer.ts` | 指摘の回答 JSON の読み取り (`kind`、`documentId`、`revision` が違えば無視、形の違う指摘と添削は捨てる) |
+| `hooks/review/format.ts` | 指摘の回答 JSON → 回答固定形 (`## 指摘`、`## 指摘した段落`、`## 書き換え`) |
 | `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、port-file の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
 | `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む (読み方は画面ごとに渡す) |
 | `hooks/views/pane-view.ts` | 待機中のペイン (Box / Text / Button / Link) |

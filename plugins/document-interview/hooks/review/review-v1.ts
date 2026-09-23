@@ -37,6 +37,36 @@ export type ReviewComment = {
 }
 
 /**
+ * 人がその場で直した 1 件 (添削)。段落番号は画面が振った番号です。
+ *
+ * - `rewrite`: 段落の文字を `text` に書き換える (書式なしの文)
+ * - `delete`: 段落を消す
+ * - `move`: 段落を、段落 `to` の後へ動かす
+ * - `add`: 段落の下に、`text` の段落を足す
+ *
+ * `rewrite` と `add` の `mode` は、`text` の使い方です。`exact` は一字一句そのまま使い、
+ * `guide` は人の意図の見本として、Claude が前後の文に合わせて直します。
+ */
+export type ReviewEdit =
+  | { kind: 'rewrite'; block: number; text: string; mode: EditMode }
+  | { kind: 'delete'; block: number }
+  | { kind: 'move'; block: number; to: number }
+  | { kind: 'add'; block: number; text: string; mode: EditMode }
+
+/**
+ * 書き換えた文と足した文の使い方。`exact` = そのまま使う (既定)、`guide` = 参考にして直す。
+ */
+export type EditMode = 'exact' | 'guide'
+
+/**
+ * 回答に書く、使い方の名前。
+ */
+export const EDIT_MODE_LABELS: Readonly<Record<EditMode, string>> = {
+  exact: 'そのまま',
+  guide: '参考にして直す',
+}
+
+/**
  * ブラウザが POST する指摘の回答 JSON。
  */
 export type ReviewAnswerV1 = {
@@ -46,7 +76,9 @@ export type ReviewAnswerV1 = {
   revision: number
   /** 画面で付けた順 */
   comments: ReviewComment[]
-  /** 指摘を付けた段落の文字列。キーは段落番号 */
+  /** 人がその場で直したもの (添削)。画面で付けた順 */
+  edits: ReviewEdit[]
+  /** 指摘か添削を付けた段落の文字列。キーは段落番号 */
   blocks: Record<string, string>
   globalNote?: string
   submittedAt?: string

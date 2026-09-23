@@ -57,6 +57,25 @@ const REVIEW_STYLE = `
 .c-quote{color:var(--muted);margin-right:6px}
 .c-del{flex:none}
 .c-empty{margin:0;font-size:13px;color:var(--muted)}
+.doc-body .blk.edited,.doc-body .blk.moved{box-shadow:inset 3px 0 0 var(--red)}
+.doc-body .blk.deleted{box-shadow:inset 3px 0 0 var(--red);opacity:.55;text-decoration:line-through}
+.doc-body tr.blk.edited,.doc-body tr.blk.moved,.doc-body tr.blk.deleted{box-shadow:none}
+.doc-body tr.blk.edited>:first-child,.doc-body tr.blk.moved>:first-child,.doc-body tr.blk.deleted>:first-child{box-shadow:inset 3px 0 0 var(--red)}
+.doc-body .added{cursor:pointer;padding-left:6px;margin-left:-6px;border-radius:6px;background:var(--red-soft);box-shadow:inset 3px 0 0 var(--red)}
+.doc-body tr.added{box-shadow:none}
+.etag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;background:var(--red-soft);color:var(--red);font:600 11px/18px var(--sans);vertical-align:1px;user-select:none;-webkit-user-select:none}
+.edit-actions{display:flex;flex-wrap:wrap;gap:6px}
+.edit-actions .btn{padding:5px 12px;font-size:12.5px;font-weight:500}
+.editor{margin-top:10px}
+.editor textarea{min-height:96px}
+.editor-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;font-size:13px}
+.editor-row input{width:84px;padding:6px 8px;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.modes{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.mode{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;line-height:1.5;color:var(--muted);cursor:pointer}
+.mode:has(input:checked){border-color:var(--blue);background:var(--blue-soft)}
+.mode input{margin:3px 0 0}
+.mode b{display:block;color:var(--ink);font-size:13px}
+.e-no{flex:none;padding:0 6px;border-radius:4px;background:var(--red-soft);color:var(--red);font:600 11px/20px var(--sans)}
 `.trim()
 
 /**
@@ -98,6 +117,15 @@ const SCRIPT = `
   var textEl = document.getElementById('di-text');
   var addEl = document.getElementById('di-add');
   var blockListEl = document.getElementById('di-block-list');
+  var editListEl = document.getElementById('di-edit-list');
+  var editAllEl = document.getElementById('di-edit-all');
+  var editorEl = document.getElementById('di-editor');
+  var editorLabelEl = document.getElementById('di-editor-label');
+  var editorTextEl = document.getElementById('di-editor-text');
+  var MODE_LABELS = { exact: 'そのまま', guide: '参考にして直す' };
+  var moverEl = document.getElementById('di-mover');
+  var moveToEl = document.getElementById('di-move-to');
+  var deleteEl = root.querySelector('[data-edit="delete"]');
   var phaseEl = document.getElementById('di-phase');
   var statusEl = document.getElementById('di-status');
   var submitEl = document.getElementById('di-submit');
@@ -159,7 +187,7 @@ const SCRIPT = `
     if (!always && ownText(el).trim() === '') return;
     var text = textOf(el);
     if (text.trim() === '') return;
-    blocks.push({ el: el, text: text });
+    blocks.push({ el: el, text: text, orig: el.cloneNode(true) });
     var n = blocks.length;
     el.classList.add('blk');
     el.setAttribute('data-n', String(n));
@@ -168,13 +196,16 @@ const SCRIPT = `
   });
 
   var comments = [];
+  var edits = [];
   var current = null;
   var chip = null;
+  var editorMode = null;
 
   function blockOf(node) {
     var el = node && (node.nodeType === 1 ? node : node.parentNode);
-    var found = el && el.closest ? el.closest('.blk') : null;
-    return found && docEl.contains(found) ? Number(found.getAttribute('data-n')) : null;
+    var found = el && el.closest ? el.closest('.blk, .added') : null;
+    if (!found || !docEl.contains(found)) return null;
+    return Number(found.getAttribute(found.classList.contains('added') ? 'data-parent' : 'data-n'));
   }
 
   function isKeep(comment) { return comment.chip === KEEP; }
@@ -259,8 +290,158 @@ const SCRIPT = `
     listNode.appendChild(ol);
   }
 
+  // 添削: 段落を元に戻してから、書き換え、削除、移動、追加を描き直す (元の段落の文字は block.text に残す)
+  var EDIT_LABELS = { rewrite: '書き換え', delete: '削除', move: '移動', add: '追加' };
+
+  function editsOf(n) { return edits.filter(function (edit) { return edit.block === n; }); }
+
+  function tagOf(text) {
+    var tag = document.createElement('span');
+    tag.className = 'etag';
+    tag.setAttribute('aria-hidden', 'true');
+    tag.textContent = text;
+    return tag;
+  }
+
+  function setText(block, text) {
+    if (block.el.tagName !== 'TR') {
+      block.el.textContent = text;
+      return;
+    }
+    var cells = Array.prototype.slice.call(block.el.children);
+    var parts = text.split('|').map(function (part) { return part.trim(); });
+    cells.forEach(function (cell, index) {
+      cell.textContent = parts.length === cells.length ? parts[index] : (index === 0 ? text : '');
+    });
+  }
+
+  function hostOf(el) { return el.tagName === 'TR' ? el.firstElementChild : el; }
+
+  function addedOf(block, text, n) {
+    var tag = block.el.tagName;
+    var el;
+    if (tag === 'TR') {
+      el = document.createElement('tr');
+      var cell = document.createElement('td');
+      cell.setAttribute('colspan', String(block.el.children.length || 1));
+      cell.textContent = text;
+      el.appendChild(cell);
+    } else {
+      el = document.createElement(tag === 'LI' ? 'li' : (tag === 'DT' || tag === 'DD') ? 'dd' : tag === 'PRE' ? 'pre' : 'p');
+      el.textContent = text;
+    }
+    el.className = 'added';
+    el.setAttribute('data-parent', String(n));
+    var host = hostOf(el);
+    host.insertBefore(tagOf('追加'), host.firstChild);
+    return el;
+  }
+
+  function applyEdits() {
+    all('.added', docEl).forEach(function (el) { el.parentNode.removeChild(el); });
+    blocks.forEach(function (block, index) {
+      block.el.classList.remove('edited', 'deleted', 'moved');
+      var fresh = block.orig.cloneNode(true);
+      while (block.el.firstChild) block.el.removeChild(block.el.firstChild);
+      while (fresh.firstChild) block.el.appendChild(fresh.firstChild);
+      var list = editsOf(index + 1);
+      var tags = [];
+      var last = block.el;
+      list.forEach(function (edit) {
+        if (edit.kind === 'rewrite') {
+          setText(block, edit.text);
+          block.el.classList.add('edited');
+          tags.push('書き換え');
+        } else if (edit.kind === 'delete') {
+          block.el.classList.add('deleted');
+          tags.push('削除');
+        } else if (edit.kind === 'move') {
+          block.el.classList.add('moved');
+          tags.push('移動 → #' + edit.to + ' の後へ');
+        }
+      });
+      list.filter(function (edit) { return edit.kind === 'add'; }).forEach(function (edit) {
+        var el = addedOf(block, edit.text, index + 1);
+        last.parentNode.insertBefore(el, last.nextSibling);
+        last = el;
+      });
+      var host = hostOf(block.el);
+      tags.reverse().forEach(function (text) { if (host) host.insertBefore(tagOf(text), host.firstChild); });
+    });
+  }
+
+  function describeEdit(edit) {
+    if (edit.kind === 'delete') return 'この段落を消す';
+    if (edit.kind === 'move') return '#' + edit.to + ' の後へ動かす';
+    return '(' + MODE_LABELS[edit.mode] + ') ' + edit.text;
+  }
+
+  function modeField() { return root.elements.namedItem('edit-mode'); }
+
+  function setMode(mode) {
+    Array.prototype.forEach.call(modeField(), function (radio) { radio.checked = radio.value === mode; });
+  }
+
+  function modeOf() {
+    var checked = Array.prototype.filter.call(modeField(), function (radio) { return radio.checked; })[0];
+    return checked && checked.value === 'guide' ? 'guide' : 'exact';
+  }
+
+  function fillEdits(listNode, list, withBlock, empty) {
+    while (listNode.firstChild) listNode.removeChild(listNode.firstChild);
+    if (list.length === 0) {
+      var p = document.createElement('p');
+      p.className = 'c-empty';
+      p.textContent = empty;
+      listNode.appendChild(p);
+      return;
+    }
+    var ol = document.createElement('ol');
+    ol.className = 'c-list';
+    list.forEach(function (edit) {
+      var li = document.createElement('li');
+      li.className = 'c-item';
+      var no = document.createElement('span');
+      no.className = 'e-no';
+      no.textContent = EDIT_LABELS[edit.kind];
+      var go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'c-go';
+      if (withBlock) {
+        var at = document.createElement('span');
+        at.className = 'c-at';
+        at.textContent = '#' + edit.block;
+        go.appendChild(at);
+      }
+      var body = document.createElement('span');
+      body.className = 'c-body';
+      body.textContent = describeEdit(edit);
+      go.appendChild(body);
+      go.addEventListener('click', function () {
+        selectBlock(edit.block, '');
+        reveal(edit.block);
+      });
+      var undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'link c-del';
+      undo.textContent = '元に戻す';
+      undo.addEventListener('click', function () {
+        var index = edits.indexOf(edit);
+        if (index >= 0) edits.splice(index, 1);
+        saveDraft();
+        render();
+      });
+      li.appendChild(no);
+      li.appendChild(go);
+      li.appendChild(undo);
+      ol.appendChild(li);
+    });
+    listNode.appendChild(ol);
+  }
+
   // 指摘の印、一覧、数を描き直す
   function render() {
+    applyEdits();
     all('.mk', docEl).forEach(function (el) { el.parentNode.removeChild(el); });
     blocks.forEach(function (block) { block.el.classList.remove('has', 'keep'); });
     var byBlock = Object.create(null);
@@ -286,11 +467,16 @@ const SCRIPT = `
 
     var entries = sorted();
     fill(listEl, entries, true, 'まだ指摘はありません。' + HINT);
+    var sortedEdits = edits.slice().sort(function (a, b) { return a.block - b.block; });
+    fillEdits(editAllEl, sortedEdits, true, '書き換えはまだありません。');
     if (current) {
       fill(blockListEl, entries.filter(function (entry) { return entry.comment.block === current.block; }), false, 'この段落の指摘はまだありません。');
+      fillEdits(editListEl, editsOf(current.block), false, 'この段落の書き換えはまだありません。');
+      var deleted = editsOf(current.block).some(function (edit) { return edit.kind === 'delete'; });
+      deleteEl.textContent = deleted ? '消すのをやめる' : 'この段落を消す';
     }
     var keep = comments.filter(isKeep).length;
-    var stats = { comments: comments.length - keep, keep: keep, blocks: Object.keys(byBlock).length, total: blocks.length };
+    var stats = { comments: comments.length - keep, keep: keep, edits: edits.length, blocks: Object.keys(byBlock).length, total: blocks.length };
     all('[data-stat]').forEach(function (el) { el.querySelector('dd').textContent = String(stats[el.getAttribute('data-stat')]); });
     all('[data-count]').forEach(function (el) { el.querySelector('b').textContent = String(stats[el.getAttribute('data-count')]); });
     addEl.disabled = !(chip || textEl.value.trim());
@@ -331,10 +517,101 @@ const SCRIPT = `
     quoteBoxEl.hidden = !quote;
     textEl.value = '';
     setChip(null);
+    closeEditors();
     render();
     inspectorEl.scrollTop = 0;
     openSheet();
   }
+
+  // 右: 添削の操作。書き換えと削除は同じ段落に 1 つだけ。削除した段落は動かさない
+  function closeEditors() {
+    editorMode = null;
+    editorEl.hidden = true;
+    moverEl.hidden = true;
+  }
+
+  function without(n, kinds) {
+    edits = edits.filter(function (edit) { return !(edit.block === n && kinds.indexOf(edit.kind) >= 0); });
+  }
+
+  function openEditor(mode) {
+    if (!current) return;
+    closeEditors();
+    editorMode = mode;
+    var existing = editsOf(current.block).filter(function (edit) { return edit.kind === 'rewrite'; })[0];
+    editorLabelEl.textContent = mode === 'rewrite' ? '書き換えた後の文 (書式なし)' : 'この段落の下に足す文';
+    editorTextEl.value = mode === 'rewrite' ? (existing ? existing.text : blocks[current.block - 1].text) : '';
+    setMode(mode === 'rewrite' && existing ? existing.mode : 'exact');
+    editorEl.hidden = false;
+    editorTextEl.focus();
+  }
+
+  function confirmEditor() {
+    if (!current || !editorMode) return;
+    var text = editorTextEl.value.replace(/\\s+$/, '');
+    if (editorMode === 'rewrite') {
+      without(current.block, ['rewrite', 'delete']);
+      if (text.trim() && text !== blocks[current.block - 1].text) edits.push({ kind: 'rewrite', block: current.block, text: text, mode: modeOf() });
+    } else if (text.trim()) {
+      edits.push({ kind: 'add', block: current.block, text: text, mode: modeOf() });
+    }
+    closeEditors();
+    saveDraft();
+    render();
+  }
+
+  function confirmMove() {
+    if (!current) return;
+    var to = Number(moveToEl.value);
+    if (!(to >= 1 && to <= blocks.length && Math.floor(to) === to) || to === current.block) {
+      setStatus('移動先は 1〜' + blocks.length + ' の、この段落とは別の段落番号にしてください。', 'err');
+      return;
+    }
+    without(current.block, ['move', 'delete']);
+    edits.push({ kind: 'move', block: current.block, to: to });
+    closeEditors();
+    saveDraft();
+    render();
+    setStatus(HINT, '');
+  }
+
+  all('[data-edit]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      if (!current) return;
+      var kind = button.getAttribute('data-edit');
+      if (kind === 'rewrite' || kind === 'add') {
+        openEditor(kind);
+      } else if (kind === 'delete') {
+        var deleted = editsOf(current.block).some(function (edit) { return edit.kind === 'delete'; });
+        without(current.block, ['delete', 'rewrite', 'move']);
+        if (!deleted) edits.push({ kind: 'delete', block: current.block });
+        closeEditors();
+        saveDraft();
+        render();
+      } else if (kind === 'move') {
+        closeEditors();
+        var existing = editsOf(current.block).filter(function (edit) { return edit.kind === 'move'; })[0];
+        moveToEl.value = existing ? String(existing.to) : '';
+        moveToEl.max = String(blocks.length);
+        moverEl.hidden = false;
+        moveToEl.focus();
+      }
+    });
+  });
+  all('[data-action="editor-ok"]').forEach(function (button) { button.addEventListener('click', confirmEditor); });
+  all('[data-action="move-ok"]').forEach(function (button) { button.addEventListener('click', confirmMove); });
+  all('[data-action="editor-cancel"]').forEach(function (button) { button.addEventListener('click', closeEditors); });
+  editorTextEl.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      confirmEditor();
+    }
+  });
+  moveToEl.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    confirmMove();
+  });
 
   function reveal(n) {
     var block = blocks[n - 1];
@@ -429,9 +706,9 @@ const SCRIPT = `
 
   function collect() {
     var texts = {};
-    comments.forEach(function (comment) {
-      var block = blocks[comment.block - 1];
-      if (block) texts[String(comment.block)] = block.text;
+    comments.concat(edits).forEach(function (item) {
+      var block = blocks[item.block - 1];
+      if (block) texts[String(item.block)] = block.text;
     });
     return {
       schemaVersion: 1,
@@ -440,6 +717,11 @@ const SCRIPT = `
       revision: review.revision,
       comments: comments.map(function (comment) {
         return { block: comment.block, chip: comment.chip, quote: comment.quote, text: comment.text };
+      }),
+      edits: edits.map(function (edit) {
+        if (edit.kind === 'delete') return { kind: 'delete', block: edit.block };
+        if (edit.kind === 'move') return { kind: 'move', block: edit.block, to: edit.to };
+        return { kind: edit.kind, block: edit.block, text: edit.text, mode: edit.mode };
       }),
       blocks: texts,
       globalNote: globalEl ? globalEl.value : ''
@@ -466,6 +748,16 @@ const SCRIPT = `
         text: typeof comment.text === 'string' ? comment.text : ''
       });
     });
+    (Array.isArray(saved.edits) ? saved.edits : []).forEach(function (edit) {
+      if (!edit || typeof edit.block !== 'number' || !blocks[edit.block - 1]) return;
+      if ((edit.kind === 'rewrite' || edit.kind === 'add') && typeof edit.text === 'string' && edit.text.trim()) {
+        edits.push({ kind: edit.kind, block: edit.block, text: edit.text, mode: edit.mode === 'guide' ? 'guide' : 'exact' });
+      } else if (edit.kind === 'delete') {
+        edits.push({ kind: 'delete', block: edit.block });
+      } else if (edit.kind === 'move' && typeof edit.to === 'number' && blocks[edit.to - 1] && edit.to !== edit.block) {
+        edits.push({ kind: 'move', block: edit.block, to: edit.to });
+      }
+    });
     if (globalEl && typeof saved.globalNote === 'string') globalEl.value = saved.globalNote;
   }
 
@@ -481,7 +773,7 @@ const SCRIPT = `
   }
 
   function lock() {
-    all('input, textarea, .chip, .c-del, #di-add').forEach(function (el) { el.disabled = true; });
+    all('input, textarea, .chip, .c-del, #di-add, [data-edit], [data-action="editor-ok"], [data-action="move-ok"]').forEach(function (el) { el.disabled = true; });
     submitEl.disabled = true;
   }
 
@@ -550,9 +842,11 @@ function overviewHtml(): string {
     `<p class="p-label">指摘の数</p>` +
     `<dl class="stats"><div data-stat="comments"><dt>指摘</dt><dd>0</dd></div>` +
     `<div data-stat="keep"><dt>ここは良い</dt><dd>0</dd></div>` +
+    `<div data-stat="edits"><dt>書き換え</dt><dd>0</dd></div>` +
     `<div data-stat="blocks"><dt>指摘した段落</dt><dd>0</dd></div>` +
     `<div data-stat="total"><dt>段落</dt><dd>0</dd></div></dl>` +
     `<div class="p-sec"><p class="p-label">指摘の一覧</p><div id="di-list"></div></div>` +
+    `<div class="p-sec"><p class="p-label">書き換えの一覧</p><div id="di-edit-all"></div></div>` +
     `<div class="p-sec"><label><span class="p-label">全体へのコメント</span>` +
     `<textarea name="globalNote" placeholder="段落に収まらないことがあれば、ここに書いてください"></textarea></label></div>` +
     `<p class="help">段落を押すか、段落の中の文字列を選ぶと、指摘を付けられます。${HINT}</p>` +
@@ -575,6 +869,23 @@ function blockPanelHtml(): string {
     `<button type="button" class="btn primary" id="di-add" disabled>指摘を足す</button></div>` +
     `<p class="help">チップかコメントのどちらかがあれば足せます。1 つの段落に何件でも付けられます。</p></div>` +
     `<div class="p-sec"><p class="p-label">この段落の指摘</p><div id="di-block-list"></div></div>` +
+    `<div class="p-sec"><p class="p-label">直接直す</p><div class="edit-actions">` +
+    `<button type="button" class="btn ghost" data-edit="rewrite">書き換える</button>` +
+    `<button type="button" class="btn ghost" data-edit="delete">この段落を消す</button>` +
+    `<button type="button" class="btn ghost" data-edit="move">移動する</button>` +
+    `<button type="button" class="btn ghost" data-edit="add">この下に段落を足す</button></div>` +
+    `<div class="editor" id="di-editor" hidden><label><span class="p-label" id="di-editor-label">書き換えた後の文</span>` +
+    `<textarea id="di-editor-text"></textarea></label>` +
+    `<div class="modes" role="radiogroup" aria-label="この文の使い方">` +
+    `<label class="mode"><input type="radio" name="edit-mode" value="exact" checked><span><b>そのまま使う</b>書いた文を一字一句そのまま入れます</span></label>` +
+    `<label class="mode"><input type="radio" name="edit-mode" value="guide"><span><b>参考にして直す</b>書いた文の意図に沿って、Claude が前後に合わせて直します</span></label></div>` +
+    `<div class="editor-row"><button type="button" class="btn ghost" data-action="editor-cancel">やめる</button>` +
+    `<button type="button" class="btn primary" data-action="editor-ok">確定</button></div></div>` +
+    `<div class="editor" id="di-mover" hidden><div class="editor-row"><label>段落 <input type="number" id="di-move-to" min="1"> の後へ</label>` +
+    `<button type="button" class="btn ghost" data-action="editor-cancel">やめる</button>` +
+    `<button type="button" class="btn primary" data-action="move-ok">確定</button></div></div>` +
+    `<p class="help">書き換えは書式なしの文で書きます (太字などの印は Claude が付け直します)。Ctrl+Enter でも確定できます。「参考にして直す」にすると、Claude は完了報告で書いた文と直した文を並べて示します。</p></div>` +
+    `<div class="p-sec"><p class="p-label">この段落の書き換え</p><div id="di-edit-list"></div></div>` +
     `<div class="p-foot"><button type="button" class="btn ghost" data-action="back">全体に戻る</button></div>` +
     `</section>`
   )
@@ -629,7 +940,7 @@ ${blockPanelHtml()}
 </aside>
 </div>
 <footer class="bar">
-<div class="counts" id="di-progress" aria-live="polite"><span class="count" data-count="comments"><span class="lbl">指摘</span><b>0</b></span><span class="count" data-count="keep"><span class="lbl">ここは良い</span><b>0</b></span></div>
+<div class="counts" id="di-progress" aria-live="polite"><span class="count" data-count="comments"><span class="lbl">指摘</span><b>0</b></span><span class="count" data-count="keep"><span class="lbl">ここは良い</span><b>0</b></span><span class="count" data-count="edits"><span class="lbl">書き換え</span><b>0</b></span></div>
 <p class="bar-msg" id="di-status">${HINT}</p>
 <button type="button" class="btn ghost only-narrow" data-action="open-overview">全体</button>
 <button type="submit" class="btn primary" id="di-submit">送信</button>

@@ -1,4 +1,4 @@
-import type { ReviewAnswerV1, ReviewComment, ReviewV1 } from './review-v1'
+import type { ReviewAnswerV1, ReviewComment, ReviewEdit, ReviewV1 } from './review-v1'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -17,6 +17,31 @@ function commentOf(value: unknown): ReviewComment | null {
     return null
   }
   return { block: value.block as number, chip, quote, text }
+}
+
+const isBlock = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 1
+
+/**
+ * 添削 1 件を読みます。形が違えば null (その 1 件だけ捨てます)。
+ */
+function editOf(value: unknown): ReviewEdit | null {
+  if (!isRecord(value) || !isBlock(value.block)) {
+    return null
+  }
+  const block = value.block
+  switch (value.kind) {
+    case 'rewrite':
+    case 'add':
+      return typeof value.text === 'string' && value.text.trim() !== ''
+        ? { kind: value.kind, block, text: value.text, mode: value.mode === 'guide' ? 'guide' : 'exact' }
+        : null
+    case 'delete':
+      return { kind: 'delete', block }
+    case 'move':
+      return isBlock(value.to) && value.to !== block ? { kind: 'move', block, to: value.to } : null
+    default:
+      return null
+  }
 }
 
 /**
@@ -54,6 +79,7 @@ export function parseReviewAnswer(text: string, review: ReviewV1): ReviewAnswerV
     documentId: review.documentId,
     revision: review.revision,
     comments: parsed.comments.map(commentOf).filter((comment): comment is ReviewComment => comment !== null),
+    edits: Array.isArray(parsed.edits) ? parsed.edits.map(editOf).filter((edit): edit is ReviewEdit => edit !== null) : [],
     blocks,
     ...(typeof parsed.globalNote === 'string' && { globalNote: parsed.globalNote }),
     ...(typeof parsed.submittedAt === 'string' && { submittedAt: parsed.submittedAt }),

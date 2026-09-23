@@ -75,6 +75,47 @@ describe('review', () => {
       Fixtures.REVIEW,
     )
     expect(odd?.comments).toEqual([{ block: 3, chip: '削る', quote: '', text: '' }])
+    expect(odd?.edits).toHaveLength(4)
+  })
+
+  test('parseReviewAnswer: 形の違う添削は捨て、edits が無ければ空にする', async () => {
+    const answer = parseReviewAnswer(
+      JSON.stringify({
+        ...Fixtures.REVIEW_ANSWER,
+        edits: [
+          { kind: 'rewrite', block: 1, text: ' ' },
+          { kind: 'move', block: 2, to: 2 },
+          { kind: 'move', block: 2, to: 0 },
+          { kind: 'add', block: 0, text: 'a' },
+          { kind: 'rename', block: 1 },
+          { kind: 'delete', block: 4 },
+          { kind: 'add', block: 4, text: '足す' },
+          { kind: 'rewrite', block: 5, text: '直す', mode: 'guide' },
+          { kind: 'rewrite', block: 6, text: '直す', mode: 'other' },
+        ],
+      }),
+      Fixtures.REVIEW,
+    )
+    expect(answer?.edits, '使い方が無いか知らない値なら、そのまま使う').toEqual([
+      { kind: 'delete', block: 4 },
+      { kind: 'add', block: 4, text: '足す', mode: 'exact' },
+      { kind: 'rewrite', block: 5, text: '直す', mode: 'guide' },
+      { kind: 'rewrite', block: 6, text: '直す', mode: 'exact' },
+    ])
+    const { edits: _, ...withoutEdits } = Fixtures.REVIEW_ANSWER
+    expect(parseReviewAnswer(JSON.stringify(withoutEdits), Fixtures.REVIEW)?.edits).toEqual([])
+  })
+
+  test('formatReviewReply: 添削だけで指摘が無ければ (指摘なし) の後に書き換えの節を出す', async () => {
+    const reply = formatReviewReply(Fixtures.REVIEW, {
+      ...Fixtures.REVIEW_ANSWER_EMPTY,
+      edits: [
+        { kind: 'add', block: 2, text: '足す', mode: 'guide' },
+        { kind: 'rewrite', block: 2, text: '後', mode: 'exact' },
+      ],
+      blocks: { '2': '前' },
+    })
+    expect(reply.split('\n').slice(2, 9)).toEqual(['## 指摘', '(指摘なし)', '## 書き換え', '#2 書き換え (そのまま)', '前: 前', '後: 後', '#2 の後に追加 (参考にして直す)'])
   })
 
   test('formatReviewReply: 段落番号の順に指摘を並べ、指摘した段落の文字列を添える', async () => {
@@ -122,6 +163,10 @@ describe('review', () => {
     expect(html).toContain('<button type="button" class="chip keep" data-chip="ここは良い" aria-pressed="false">ここは良い</button>')
     expect(html).toContain('<section class="panel" data-panel="overview">')
     expect(html).toContain('<section class="panel" data-panel="block" hidden>')
+    expect(countOf(html, ' data-edit="')).toBe(4)
+    expect(html).toContain('<textarea id="di-editor-text"></textarea>')
+    expect(html).toContain('<input type="radio" name="edit-mode" value="exact" checked>')
+    expect(html).toContain('<input type="radio" name="edit-mode" value="guide">')
     expect(html).toContain('<button type="submit" class="btn primary" id="di-submit">送信</button>')
   })
 
