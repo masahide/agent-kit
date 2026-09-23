@@ -12,5 +12,12 @@ declare module 'claude-code' {
       /** 呼び出しの中で回答を待つ上限 (秒)。既定 300、0 で待たない、上限 1800 */
       waitSeconds?: number
     }
+    /** 書き上げた文書 (interview/<label>.doc.html) を指摘の画面に出し、人の指摘を待つ */
+    'mcp__document-interview__open_review': {
+      review: unknown
+      openBrowser?: boolean
+      /** 呼び出しの中で指摘を待つ上限 (秒)。既定 300、0 で待たない、上限 1800 */
+      waitSeconds?: number
+    }
   }
 }

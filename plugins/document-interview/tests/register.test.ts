@@ -1,6 +1,6 @@
 import { describe, expect, test, tier } from 'claude-code/testing'
 
-import { FULL_TOOL_NAME, PANE_ID, PLUGIN_NAME } from '../hooks/names'
+import { FULL_REVIEW_TOOL_NAME, FULL_TOOL_NAME, PANE_ID, PLUGIN_NAME } from '../hooks/names'
 import { STRINGS } from '../hooks/views/strings'
 import Fixtures from './fixtures'
 import type { WaitCall } from './fixtures'
@@ -10,12 +10,12 @@ tier('user')
 const ANSWER_PATH = '/work/interview/spec-auth-01.answer.json'
 
 describe('register', () => {
-  test('session.start でツール open_form と /interview が登録される', async ($, on) => {
+  test('session.start でツール open_form と open_review と /interview が登録される', async ($, on) => {
     const world = Fixtures.world(on)
 
     await $.session.start(Fixtures.SESSION)
 
-    expect(world.registeredTools).toEqual(['open_form'])
+    expect(world.registeredTools).toEqual(['open_form', 'open_review'])
     expect(world.registeredCommands).toEqual(['interview'])
   })
 
@@ -468,4 +468,132 @@ describe('register', () => {
       expect(world.receiverCommandRuns('open').map(run => run.slice(0, expected.length))).toEqual([[...expected]])
     })
   }
+  describe('open_review', () => {
+    const REVIEW_ANSWER_PATH = '/work/interview/spec-auth-01-review.answer.json'
+
+    test('文書の HTML が無ければ invalid を返し、受信サーバを起動しない', async ($, on) => {
+      const world = Fixtures.world(on)
+      await $.session.start(Fixtures.SESSION)
+
+      const answered = await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: false, waitSeconds: 0 })
+      const result = JSON.parse(answered.result as string)
+
+      expect(result.status).toBe('invalid')
+      expect(result.errors).toEqual([`${Fixtures.DOC_PATH}: ${STRINGS.noDocument}`])
+      expect(world.receiverRuns()).toEqual([])
+      expect(world.opened).toEqual([])
+    })
+
+    test('許可リストに無い要素や、review の欄の誤りは invalid で全部返す', async ($, on) => {
+      const world = Fixtures.world(on)
+      await $.session.start(Fixtures.SESSION)
+      world.files.set(Fixtures.DOC_PATH, '<p onclick="x()">a</p><script>y()</script>')
+
+      const bad = await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: false, waitSeconds: 0 })
+      const errors = JSON.parse(bad.result as string).errors as string[]
+      expect(errors).toHaveLength(2)
+      expect(errors.every(error => error.startsWith(`${Fixtures.DOC_PATH}: `))).toBe(true)
+
+      const wrong = await $.tool.call({
+        tool: FULL_REVIEW_TOOL_NAME,
+        review: { ...Fixtures.REVIEW, revision: 0 },
+        openBrowser: false,
+        waitSeconds: 0,
+      })
+      expect(JSON.parse(wrong.result as string)).toEqual({ status: 'invalid', errors: ['revision: 1 以上の整数にしてください'] })
+      expect(world.receiverRuns()).toEqual([])
+    })
+
+    test('同期待ち中に指摘が届くと answered と固定形を返す。証跡は interview/<label>.* に書く', async ($, on) => {
+      const world = Fixtures.world(on, {
+        waitReply: call => {
+          if (call.count === 1) {
+            world.files.set(REVIEW_ANSWER_PATH, JSON.stringify(Fixtures.REVIEW_ANSWER))
+            return { answered: true }
+          }
+          return { answered: false }
+        },
+      })
+      await $.session.start(Fixtures.SESSION)
+      world.files.set(Fixtures.DOC_PATH, Fixtures.DOC_HTML)
+
+      const answered = await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: false, waitSeconds: 30 })
+      await world.clock.settle()
+      const result = JSON.parse(answered.result as string)
+
+      expect(result.status).toBe('answered')
+      expect(result.reply).toBe(Fixtures.REVIEW_REPLY)
+      expect(result.files).toEqual({
+        doc: Fixtures.DOC_PATH,
+        review: '/work/interview/spec-auth-01-review.json',
+        html: '/work/interview/spec-auth-01-review.html',
+        answer: REVIEW_ANSWER_PATH,
+        md: '/work/interview/spec-auth-01-review.md',
+      })
+      expect(answered.context).toEqual([STRINGS.reviewAnsweredContext])
+      expect(JSON.parse(world.files.get('/work/interview/spec-auth-01-review.json') ?? '')).toEqual(Fixtures.REVIEW)
+      expect(world.files.get('/work/interview/spec-auth-01-review.html')).toContain('id="di-review"')
+      expect(world.files.get('/work/interview/spec-auth-01-review.md')).toBe(`${Fixtures.REVIEW_REPLY}
+`)
+      expect(world.files.get(Fixtures.DOC_PATH), '文書の HTML は消さない').toBe(Fixtures.DOC_HTML)
+
+      const argv = world.receiverRuns()[0] ?? []
+      expect(argv.slice(argv.indexOf('--html'), argv.indexOf('--html') + 2)).toEqual(['--html', '/work/interview/spec-auth-01-review.html'])
+      expect(world.submitted).toEqual([])
+    })
+
+    test('waitSeconds: 0 なら pending を返し、指摘は prompt.submit で 1 回だけ届く。ペインの見出しは「指摘」', async ($, on) => {
+      const world = Fixtures.world(on)
+      await $.session.start(Fixtures.SESSION)
+      world.files.set(Fixtures.DOC_PATH, Fixtures.DOC_HTML)
+
+      const answered = await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: false, waitSeconds: 0 })
+      await world.clock.settle()
+      const result = JSON.parse(answered.result as string)
+      expect(result.status).toBe('pending')
+      expect(result.files).toEqual({
+        doc: Fixtures.DOC_PATH,
+        review: '/work/interview/spec-auth-01-review.json',
+        html: '/work/interview/spec-auth-01-review.html',
+      })
+      expect(answered.context).toEqual([STRINGS.reviewPendingContext])
+
+      const ui = await $.ui.mount({
+        plugin: PLUGIN_NAME,
+        surface: 'terminal',
+        component: 'Pane',
+        requestId: PANE_ID,
+        props: Fixtures.PANE.props,
+      })
+      expect(await ui.find({ type: 'Text', text: STRINGS.reviewHeaderOf('spec-auth-01-review', 1) })).toBeDefined()
+      await ui.unmount()
+
+      world.files.set(REVIEW_ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+      await world.clock.advance(500)
+      expect(world.submitted, '質問票の形の回答は無視する').toEqual([])
+
+      world.files.set(REVIEW_ANSWER_PATH, JSON.stringify(Fixtures.REVIEW_ANSWER_EMPTY))
+      await world.clock.advance(500)
+      expect(world.submitted.map(submit => submit.text)).toEqual([Fixtures.REVIEW_REPLY_EMPTY])
+
+      await world.clock.advance(5000)
+      expect(world.submitted).toHaveLength(1)
+    })
+
+    test('質問票の待機中に open_review を呼ぶと、前の受信サーバを止めて差し替える', async ($, on) => {
+      const world = Fixtures.world(on)
+      await $.session.start(Fixtures.SESSION)
+      world.files.set(Fixtures.DOC_PATH, Fixtures.DOC_HTML)
+
+      await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+      await world.clock.settle()
+      await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: false, waitSeconds: 0 })
+      await world.clock.settle()
+
+      expect(world.receiverCommandRuns('stop')).toHaveLength(1)
+      world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+      await world.clock.advance(500)
+      expect(world.submitted, '前の質問票の回答は届けない').toEqual([])
+    })
+  })
 })

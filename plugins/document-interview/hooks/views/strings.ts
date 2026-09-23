@@ -6,6 +6,8 @@ export const STRINGS = {
   paneTitle: 'インタビュー',
   /** ペイン 1 行目: `インタビュー: <label>  (rev <revision>)` */
   headerOf: (label: string, revision: number) => `インタビュー: ${label}  (rev ${revision})`,
+  /** 指摘の画面のペイン 1 行目: `指摘: <label>  (rev <revision>)` */
+  reviewHeaderOf: (label: string, revision: number) => `指摘: ${label}  (rev ${revision})`,
   /** ペイン 2 行目 */
   answerInBrowser: 'ブラウザで回答してください:',
   /** ペインの `Link` の文字 (href は localhost の URL) */
@@ -16,8 +18,8 @@ export const STRINGS = {
   openBrowser: 'ブラウザで開く',
   /** [取り消す] ボタン */
   cancel: '取り消す',
-  /** 待機中の質問票が無いときの `/interview` の返答 */
-  nothingPending: '待機中の質問票はありません',
+  /** 待機中の画面が無いときの `/interview` の返答 */
+  nothingPending: '待機中の質問票も指摘の画面もありません',
   /** 待機中に `/interview` を実行したときの返答 */
   reopenedOf: (url: string) => `インタビューのペインとブラウザを開き直しました: ${url}`,
   /** 人がペインを閉じたときの状態行 */
@@ -34,9 +36,17 @@ export const STRINGS = {
   answeredContext:
     'reply が人の回答 (【インタビュー回答】で始まる固定形) です。user turn は届きません。' +
     'reply を回答として読み、文書の作成に進んでください。',
+  /** 指摘の画面の `pending` の結果に添える context */
+  reviewPendingContext:
+    '指摘の画面をブラウザに出しました。指摘は後で【インタビュー回答】で始まる user turn として届きます。' +
+    'それまで文書を直さず、完了報告もせず、このターンを終えてください。',
+  /** 指摘の画面の `answered` の結果に添える context */
+  reviewAnsweredContext:
+    'reply が人の指摘 (【インタビュー回答】で始まる固定形) です。user turn は届きません。' +
+    '指摘を反映して文書を直し、完了報告で指摘ごとに直した箇所か直さなかった理由を添えてください。',
   /** `cancelled` の理由 */
   cancelledByPerson: '人が [取り消す] を押しました',
-  replacedByAnother: '別の質問票の open_form で差し替えられました',
+  replacedByAnother: '別の open_form か open_review で差し替えられました',
   /** ツールの説明 (モデル向け) */
   toolDescription:
     '文書を書く前に、決定してほしい論点を質問票 JSON (schemaVersion 1) として渡すと、' +
@@ -46,8 +56,19 @@ export const STRINGS = {
     '"pending": まだ回答がありません (上限到達、中断、waitSeconds が 0)。回答は後で【インタビュー回答】で始まる user turn として届くので、文書を書かずにターンを終えてください。' +
     '"cancelled": 人が取り消しました。何も届きません。' +
     '"invalid": errors を直して再送してください。"failed": reason の代替導線を人に案内してください。',
+  /** ツール open_review の説明 (モデル向け) */
+  reviewToolDescription:
+    '書き上げた文書を人に見せ、段落や文字列への指摘を返してもらいます (指摘モード)。' +
+    '先に文書を HTML (h2〜h4、p、ul、ol、li、table などの許可リストの要素だけ、属性は th と td の colspan と rowspan だけ、10 万文字まで) にして ' +
+    'interview/<label>.doc.html に書き出し、review に schemaVersion 1、documentId、revision、label、title を渡します。' +
+    '結果の status は open_form と同じです。"answered" なら reply の ## 指摘 を反映して文書を直してください。' +
+    '"pending" なら指摘は後で【インタビュー回答】で始まる user turn として届くので、文書を直さずにターンを終えてください。',
   /** コマンドの説明 */
-  commandDescription: '待機中のインタビューのペインとブラウザを開き直す',
+  commandDescription: '待機中の質問票か指摘の画面の、ペインとブラウザを開き直す',
+  /** 文書の HTML ファイルが無いとき */
+  noDocument: 'ファイルがありません。書き上げた文書を HTML にして、この場所に書き出してから呼んでください',
+  /** 文書の HTML ファイルを読めないとき */
+  unreadableDocument: 'ファイルを読めませんでした。4 MiB を超えているなら、節の切れ目で分けて part を付けてください',
   /** Python 3 が無いときの理由 */
   noPython: 'Python 3 (python3、python、py -3 のどれか) が見つからないため受信サーバを起動できませんでした',
   /** 受信サーバが port-file を書かなかったときの理由 */

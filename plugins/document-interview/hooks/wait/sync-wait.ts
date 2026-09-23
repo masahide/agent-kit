@@ -1,5 +1,3 @@
-import { parseAnswer } from '../form/answer'
-import type { AnswerV1, FormV1 } from '../form/form-v1'
 import type { Host } from '../host'
 import { waitUrlOf } from '../receiver'
 
@@ -21,10 +19,11 @@ export const WAIT_ROUND_SECONDS = 4
 export type WaitDeps = Pick<Host, 'exists' | 'readFile' | 'fetch'>
 
 /**
- * 何を待つか。
+ * 何を待つか。`T` は回答の型 (質問票なら AnswerV1、指摘の画面なら ReviewAnswerV1)。
  */
-export type WaitTarget = {
-  form: FormV1
+export type WaitTarget<T> = {
+  /** 回答ファイルの中身を、待っている画面の回答として読む。別の画面の回答や形の違うものは null */
+  read: (text: string) => T | null
   /** `interview/<label>.answer.json` */
   answerPath: string
   port: number
@@ -52,8 +51,8 @@ export type WaitOptions = {
  *   (`skipped` = waitSeconds が 0、`timeout` = 上限到達、`abort` = 中断、
  *   `receiverLost` = 受信サーバに届かない)
  */
-export type WaitEnd =
-  | { kind: 'answered'; answer: AnswerV1 }
+export type WaitEnd<T> =
+  | { kind: 'answered'; answer: T }
   | { kind: 'dropped' }
   | { kind: 'pending'; endedBy: 'skipped' | 'timeout' | 'abort' | 'receiverLost'; waitedSeconds: number }
 
@@ -68,14 +67,14 @@ export function clampWaitSeconds(value: unknown): number {
 }
 
 /**
- * 回答ファイルがあり、質問票と documentId / revision が一致すれば読みます。
+ * 回答ファイルがあり、待っている画面の回答として読めれば返します。
  */
-export async function readAnswer(deps: WaitDeps, target: WaitTarget): Promise<AnswerV1 | null> {
+export async function readAnswer<T>(deps: WaitDeps, target: WaitTarget<T>): Promise<T | null> {
   if (!(await deps.exists(target.answerPath))) {
     return null
   }
   const text = await deps.readFile(target.answerPath).catch(() => '')
-  return parseAnswer(text, target.form)
+  return target.read(text)
 }
 
 /**
@@ -108,15 +107,15 @@ function parseWaitReply(text: string): boolean | null {
  * 無ければ `receiverLost` で打ち切ります。以後は監視タイマーの非同期経路が回答を届けます。
  *
  * @param deps Host の `exists`, `readFile`, `fetch`
- * @param target 質問票、回答ファイル、受信サーバ
+ * @param target 回答の読み方、回答ファイル、受信サーバ
  * @param options 上限、`next.signal`、待機中の判定
  * @returns どう終わったか
  */
-export async function waitForAnswer(
+export async function waitForAnswer<T>(
   deps: WaitDeps,
-  target: WaitTarget,
+  target: WaitTarget<T>,
   options: WaitOptions,
-): Promise<WaitEnd> {
+): Promise<WaitEnd<T>> {
   if (options.waitSeconds <= 0) {
     return { kind: 'pending', endedBy: 'skipped', waitedSeconds: 0 }
   }

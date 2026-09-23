@@ -14,6 +14,12 @@ Mod がそれを回答固定形 (`【インタビュー回答】` で始まる�
 `status: "pending"` を返してターンを終えてもらい、以後は `clock.every` の監視が回答を検知して
 `$.prompt.submit` で user turn として届けます (非同期経路)。
 
+指摘モード: Claude が書き上げた文書を HTML にして `interview/<label>.doc.html` に書き出し、
+ツール `open_review` を呼ぶと、この Mod がそのファイルを検査して指摘の画面を出します。
+人は段落や文字列にチップ (短くする、根拠が要る、ここは良い など 9 種) とコメントで指摘を付けます。
+受信サーバ、同期待ち、監視、ペインは `open_form` と同じで、指摘は同じ `【インタビュー回答】` の固定形の
+`## 指摘` の節で届きます。
+
 背景と決定の記録は [docs/document-interview-mod/plan.md](../../docs/document-interview-mod/plan.md) にあります。
 対象は Claude Code 2.1.278 の Claude Mods (function hooks、早期アクセス) です。
 
@@ -66,9 +72,16 @@ sequenceDiagram
 | `hooks/form/answer.ts` | 回答 JSON の読み取り (`documentId` と `revision` が質問票と違えば無視) |
 | `hooks/form/schema.ts` | `$.tool.register` に渡す JSON Schema |
 | `hooks/sheet/render-html.ts` | 質問票 → 自己完結 HTML (素の JS を文字列で埋める)。左に構成案、右に選んだものの詳細 (全体の進み具合と次に見る項目 / 決定 / 表の説明)、下に進捗と送信。構成案の HTML はブラウザで DOMParser にかけ、許可した要素と属性だけで組み直す |
+| `hooks/sheet/common.ts` | 2 つの画面が共有する CSS と、HTML と JSON の逃がし |
+| `hooks/sheet/render-review.ts` | 指摘の画面 → 自己完結 HTML。左に文書 (DOMParser で解析し、許可した要素と属性だけで組み直す)、段落に上から番号を振る。右に全体 (指摘の数と一覧、全体へのコメント) か、選んだ段落の指摘の操作 (チップ、コメント、この段落の指摘) |
 | `hooks/reply/format.ts` | 回答 JSON + 質問票 → 回答固定形 v1 |
+| `hooks/review/review-v1.ts` | 指摘の画面 (`review`) と指摘の回答 JSON の型、チップ 9 種 |
+| `hooks/review/validate-review.ts` | `review` の検証 (エラーを全部返す) |
+| `hooks/review/document.ts` | 文書の HTML の検査 (構成案と同じ要素、属性は表の colspan と rowspan だけ、10 万文字まで、段落が 1 つ以上) と、段落番号を振る要素 |
+| `hooks/review/answer.ts` | 指摘の回答 JSON の読み取り (`kind`、`documentId`、`revision` が違えば無視、形の違う指摘は捨てる) |
+| `hooks/review/format.ts` | 指摘の回答 JSON → 回答固定形 (`## 指摘` と `## 指摘した段落`) |
 | `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、port-file の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
-| `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む |
+| `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む (読み方は画面ごとに渡す) |
 | `hooks/views/pane-view.ts` | 待機中のペイン (Box / Text / Button / Link) |
 | `hooks/views/strings.ts` | 固定文言 |
 | `hooks/tool-input.d.ts` | `McpToolInputs` にツールの入力を足す宣言 (型付けのみ) |
@@ -81,15 +94,16 @@ sequenceDiagram
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate plugins/document-interview` の印字:
 
 ```
-❯ ./register.ts hooks: session.start, tool.call{tool=mcp__document-interview__open_form}, command.run{command=interview}, ui.render{component=Pane}, ui.close{id=interview}
+❯ ./register.ts hooks: session.start, tool.call{tool=mcp__document-interview__open_form}, tool.call{tool=mcp__document-interview__open_review}, command.run{command=interview}, ui.render{component=Pane}, ui.close{id=interview}
 ```
 
 | event | what the hook does |
 | --- | --- |
-| `session.start` | `$` を host に束ね、ツール `open_form` と `/interview` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする |
+| `session.start` | `$` を host に束ね、ツール `open_form` と `open_review` と `/interview` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする |
 | `tool.call` of `mcp__document-interview__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`interview/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` と `.port.json` を `receiver.py clean` で消し、受信サーバを `receiver.py start` で切り離して起動して port-file を最大 3 秒待ち、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
-| `command.run` of `interview` | 待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。待機中でなければ「待機中の質問票はありません」 |
-| `ui.render` of `Pane` (requestId `interview`) | label と revision、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
+| `tool.call` of `mcp__document-interview__open_review` | `review` を検証し、`interview/<label>.doc.html` を読んで検査する (無い、読めない、許可リストに無い要素や属性、10 万文字超、段落なし、のどれかなら `{ status: "invalid", errors }`)。`interview/<label>.json` に `review` を、`.html` に指摘の画面を書き、あとは `open_form` と同じ (受信サーバ、同期待ち、監視、ペイン)。結果の `files` は `{ doc, review, html }` (`answered` では `answer` と `md` を足す) |
+| `command.run` of `interview` | 待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。待機中でなければ「待機中の質問票も指摘の画面もありません」 |
+| `ui.render` of `Pane` (requestId `interview`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
 | `ui.close` of `interview` | 人が閉じても監視は続け、状態行に「/interview で開き直せます」を出す |
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
@@ -131,11 +145,12 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 
 ## ファイルの置き場
 
-セッションの cwd の下の `interview/` に、質問票の `label` ごとに書きます。
+セッションの cwd の下の `interview/` に、質問票と指摘の画面の `label` ごとに書きます。
 
 | ファイル | 中身 |
 | --- | --- |
-| `interview/<label>.json` | 質問票 (検証済み) |
+| `interview/<label>.json` | 質問票 (検証済み)。指摘の画面では `review` (検証済み) |
+| `interview/<label>.doc.html` | 指摘の画面に出す文書の HTML (Claude が書き、Mod は読むだけで消さない) |
 | `interview/<label>.html` | HTML シート (トークンは埋めない。ブラウザの JS が URL の `?t=` から読む) |
 | `interview/<label>.port.json` | 受信サーバが書く `{"port": n, "pid": n}` |
 | `interview/<label>.answer.json` | ブラウザが POST した回答 JSON (`open_form` は同じ label の前回のものを起動前に消す) |
@@ -143,7 +158,7 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 
 ## スキル
 
-`skills/document-interview/SKILL.md` が Claude 側の手順です。設計書・仕様書・企画書・記事を書く (更新する) 依頼で発動し、現物把握 → 構成案を書き、論点を 3±1 問に圧縮して構成案に印で置く → 質問文と構成案の自己検査 → 文脈ゼロの subagent への試問 → `open_form` → 回答の反映と文書の検査、の順に進めます。Mod は描画と回収だけを担います。
+`skills/document-interview/SKILL.md` が Claude 側の手順です。設計書・仕様書・企画書・記事を書く (更新する) 依頼で発動し、現物把握 → 構成案を書き、論点を 3±1 問に圧縮して構成案に印で置く → 質問文と構成案の自己検査 → 文脈ゼロの subagent への試問 → `open_form` → 回答の反映と文書の検査 → (宣言があれば) 文書を HTML にして `open_review` → 指摘の反映、の順に進めます。Mod は描画と回収だけを担います。
 
 | ファイル | 中身 |
 | --- | --- |
@@ -153,6 +168,7 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 | `references/question-lint.md` | ja-text-communication の規範番号順の自己検査表 |
 | `references/document-lint.md` | 回答を反映して書く文書の検査表。ja-text-communication の規範と、stop-ai-slop-jp と humanizer-ja から選んだ AI 臭の検査 (S1〜S24)、採用しなかった規則と理由 |
 | `references/preflight.md` | 試問の 5 問、質問票の Markdown の形、subagent のプロンプト雛形、打ち切り規則 |
+| `references/review-mode.md` | 指摘モード。宣言の判定、文書の HTML の書き方、`open_review` の入力と結果、長い文書の分け方、指摘の回答 (`hooks/review/format.ts` と一致)、反映と完了報告 |
 
 ## Try it
 
@@ -169,6 +185,10 @@ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir plugins/document-intervi
 5 分を過ぎるか Esc で中断すると `status: "pending"` でターンが終わり、あとで [送信] を押したときに
 `【インタビュー回答】spec-auth-01` で始まる user turn が届きます。
 ブラウザを閉じてしまったら `/interview` で開き直せます。
+
+指摘の画面は、次のように頼んで試せます。
+
+> 次の HTML を interview/spec-auth-01-review.doc.html に書き出して、review に schemaVersion 1、documentId spec-auth-01、revision 1、label spec-auth-01-review、title 「認証方式の仕様」を渡して open_review ツールを呼んでください: `<h2>認証方式</h2><p>認証は OIDC に統一します。</p>`
 
 ## テストと検証
 

@@ -1,4 +1,4 @@
 {
-  "description": "Document Interview Mod: open_form ツールと /interview コマンドの登録、質問票の検証と HTML シートの生成、受信サーバの起動、tool.call の中での回答の同期待ち (/wait のロングポーリング)、監視タイマーによる回答の検知と prompt.submit、待機中のペインの描画",
+  "description": "Document Interview Mod: open_form と open_review のツールと /interview コマンドの登録、質問票と指摘の画面 (書き上げた文書の HTML) の検証と HTML シートの生成、受信サーバの起動、tool.call の中での回答の同期待ち (/wait のロングポーリング)、監視タイマーによる回答の検知と prompt.submit、待機中のペインの描画",
   "modules": ["./register.ts"]
 }

@@ -1,13 +1,17 @@
 import type { HttpResponse } from 'claude-code'
 import { describe, expect, test, tier } from 'claude-code/testing'
 
+import { parseAnswer } from '../hooks/form/answer'
+import type { AnswerV1 } from '../hooks/form/form-v1'
 import { clampWaitSeconds, waitForAnswer, type WaitDeps, type WaitTarget } from '../hooks/wait/sync-wait'
 import Fixtures from './fixtures'
 
 tier('user')
 
 const ANSWER_PATH = '/work/interview/spec-auth-01.answer.json'
-const TARGET: WaitTarget = { form: Fixtures.FORM, answerPath: ANSWER_PATH, port: 47321, token: 'tk' }
+const TARGET: WaitTarget<AnswerV1> = {
+  read: text => parseAnswer(text, Fixtures.FORM),
+  answerPath: ANSWER_PATH, port: 47321, token: 'tk' }
 
 const ok = (text: string): HttpResponse => ({ status: 200, ok: true, headers: {}, text })
 

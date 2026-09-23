@@ -14,6 +14,16 @@ export const TOOL_NAME = 'open_form'
 export const FULL_TOOL_NAME = `mcp__${PLUGIN_NAME}__${TOOL_NAME}`
 
 /**
+ * 指摘の画面を出すツールの短い名前。
+ */
+export const REVIEW_TOOL_NAME = 'open_review'
+
+/**
+ * `tool.call` の絞り込みに使う、指摘の画面のツールの完全な名前。
+ */
+export const FULL_REVIEW_TOOL_NAME = `mcp__${PLUGIN_NAME}__${REVIEW_TOOL_NAME}`
+
+/**
  * `/interview` コマンドの名前。
  */
 export const COMMAND_NAME = 'interview'
