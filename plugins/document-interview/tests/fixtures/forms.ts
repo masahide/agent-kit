@@ -9,7 +9,7 @@ export const FORM: FormV1 = {
   documentId: 'spec-auth-01',
   revision: 1,
   label: 'spec-auth-01',
-  title: '認証方式は OIDC に寄せる',
+  title: '認証方式は OIDC に統一する',
   conclusion:
     '結論: 認証は OIDC に統一します。自前のセッション管理は捨てます。移行期間は 2 週間です。',
   glossary: [

@@ -56,7 +56,7 @@ describe('render-html', () => {
     const html = renderHtml({ form: Fixtures.FORM, date: DATE })
     expect(html).toContain('<!-- document-interview-format: v1 -->')
     expect(html).toContain('✎ INTERVIEW — 2026-09-22')
-    expect(html).toContain('<h1>認証方式は OIDC に寄せる</h1>')
+    expect(html).toContain('<h1>認証方式は OIDC に統一する</h1>')
     expect(html).toContain('<div class="concl">結論: 認証は OIDC に統一します。')
     expect(html).toContain('<b>OIDC</b> = OpenID Connect。')
     expect(html).toContain('<h2>方式</h2>')

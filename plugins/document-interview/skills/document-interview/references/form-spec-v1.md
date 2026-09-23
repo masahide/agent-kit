@@ -57,7 +57,7 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
 
 | 欄 | 型 | 規則 | 落ちたときのエラー文 |
 |---|---|---|---|
-| `title` | 文字列 | 空でない。内容の要約ではなく主張の言い切り (例: `認証方式は OIDC に寄せる`) | `title: 空でない文字列にしてください` |
+| `title` | 文字列 | 空でない。内容の要約ではなく主張の言い切り (例: `認証方式は OIDC に統一する`) | `title: 空でない文字列にしてください` |
 | `conclusion` | 文字列 | 空でない。`結論:` で始め、3 文以内 (文の数は検証しない。書き手の規律) | `conclusion: 空でない文字列にしてください` |
 | `glossary` | 配列 | 省略可。読者が知らない語だけ。各要素はオブジェクトで `term` と `definition` がどちらも空でない | `glossary: 配列にしてください` / `glossary[0]: オブジェクトにしてください` / `glossary[0].term: 空でない文字列にしてください` / `glossary[0].definition: 空でない文字列にしてください` |
 
@@ -130,7 +130,7 @@ Claude が `mcp__document-interview__open_form` の `form` に渡す JSON の契
   "documentId": "spec-auth-01",
   "revision": 1,
   "label": "spec-auth-01",
-  "title": "認証方式は OIDC に寄せる",
+  "title": "認証方式は OIDC に統一する",
   "conclusion": "結論: 認証は OIDC に統一します。自前のセッション管理は捨てます。移行期間は 2 週間です。",
   "glossary": [
     { "term": "OIDC", "definition": "OpenID Connect。OAuth 2.0 の上で認証を行う標準です。" }

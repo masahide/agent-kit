@@ -140,7 +140,7 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 
 ## スキル
 
-`skills/document-interview/SKILL.md` が Claude 側の手順です。設計書・仕様書・企画書・記事を書く (更新する) 依頼で発動し、現物把握 → 論点を 3±1 問に圧縮 → 質問文の自己検査 → 文脈ゼロの subagent への試問 → `open_form` → 回答の反映、の順に進めます。Mod は描画と回収だけを担います。
+`skills/document-interview/SKILL.md` が Claude 側の手順です。設計書・仕様書・企画書・記事を書く (更新する) 依頼で発動し、現物把握 → 論点を 3±1 問に圧縮 → 質問文の自己検査 → 文脈ゼロの subagent への試問 → `open_form` → 回答の反映と文書の検査、の順に進めます。Mod は描画と回収だけを担います。
 
 | ファイル | 中身 |
 | --- | --- |
@@ -148,6 +148,7 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 | `references/form-spec-v1.md` | 質問票 JSON の書き方 (`hooks/form/validate.ts` の全規則とエラー文、完全な例) |
 | `references/reply-format-v1.md` | 回答固定形 v1 の契約と読み方 (`hooks/reply/format.ts` のゴールデンと一致) |
 | `references/question-lint.md` | ja-text-communication の規範番号順の自己検査表 |
+| `references/document-lint.md` | 回答を反映して書く文書の検査表。ja-text-communication の規範と、stop-ai-slop-jp と humanizer-ja から選んだ AI 臭の検査 (S1〜S24)、採用しなかった規則と理由 |
 | `references/preflight.md` | 試問の 5 問、質問票の Markdown の形、subagent のプロンプト雛形、打ち切り規則 |
 
 ## Try it
