@@ -6,10 +6,3 @@
 
 # macOS の Finder が作るファイル
 .DS_Store
-
-# スパイクの実行ログ (ローカルのパスとセッション ID を含む。実測値は plan.md 11 章に残す)
-/spikes/*/debug.log
-/spikes/*/latest
-/spikes/*/run-output.json
-/spikes/*/run-stderr.txt
-/spikes/mods-spike/results.json

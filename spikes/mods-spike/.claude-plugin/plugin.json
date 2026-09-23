@@ -1,6 +1,0 @@
-{
-  "name": "spike",
-  "version": "0.0.1",
-  "description": "Function hooks の検証用スパイク: 長い $.process.run、切り離した子プロセス、同期ツール待ち、ローカル受信サーバ往復、$.prompt.submit",
-  "author": { "name": "agent-kit" }
-}

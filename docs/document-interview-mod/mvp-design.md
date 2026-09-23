@@ -203,7 +203,7 @@ Q2. ログの保持期間: (未選択 = お任せ)
 
 ## 9. 受信サーバ `scripts/receiver.py`
 
-スパイク `spikes/mods-spike/scripts/receiver.py` を土台にします。python3 標準ライブラリのみ。
+スパイク `spikes/mods-spike/scripts/receiver.py` (削除済み。コミット `e9dd2ca` の履歴にあります) を土台にします。python3 標準ライブラリのみ。
 
 引数: `--port` (既定 0 = OS 任せ), `--port-file` (必須。`{"port": n, "pid": n}` を JSON で書く), `--token` (必須), `--html` (配る HTML のパス), `--out` (回答を書くパス), `--idle-timeout` (秒。既定 3600。回答が無いまま過ぎたら終了)。
 

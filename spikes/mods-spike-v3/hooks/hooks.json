@@ -1,1 +1,0 @@
-{ "description": "V3 再試験: ツール結果の形を 3 通り試す", "modules": ["./register.ts"] }

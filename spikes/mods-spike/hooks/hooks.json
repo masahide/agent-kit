@@ -1,4 +1,0 @@
-{
-  "description": "検証用: session.start でタイマーと受信サーバの往復を仕掛け、tool.call で 20 秒待つ",
-  "modules": ["./register.ts"]
-}

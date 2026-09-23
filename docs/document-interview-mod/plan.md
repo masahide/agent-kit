@@ -429,7 +429,7 @@ M1 から M3 までが MVP です。
 
 ## 11. 検証結果 (スパイク、2026-09-22)
 
-`spikes/mods-spike/` と `spikes/mods-spike-v3/` の plugin を、Claude Code 2.1.278 に `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` を付けた非対話モード (`claude -p --plugin-dir`) で実行しました。数値はそのときの実測です。
+検証用の plugin `spikes/mods-spike/` と `spikes/mods-spike-v3/` (リポジトリからは削除済み。コミット `e9dd2ca` の履歴にあります。`git show e9dd2ca --stat` で一覧できます) を、Claude Code 2.1.278 に `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` を付けた非対話モード (`claude -p --plugin-dir`) で実行しました。数値はそのときの実測です。
 
 | 番号 | 検証したこと | 結果 | 実測 |
 |---|---|---|---|
@@ -454,7 +454,7 @@ V7 の補足: 決定 Q3 の「JSON を隠し context に添える」は成立し
 
 未検証のまま残るのは、対話モードでのペインの描画とフォーカス移動、[取り消す] ボタンの押下です (テストキットの `$.ui.mount` と `$.ui.press` では通っています)。
 
-受信サーバのプロトタイプは `spikes/mods-spike/scripts/receiver.py` と `form.html` にあります。トークン無しの GET は 403、POST 1 件でファイルに書いて自動終了します。
+受信サーバのプロトタイプは `spikes/mods-spike/scripts/receiver.py` と `form.html` でした (コミット `e9dd2ca` の履歴にあります)。トークン無しの GET は 403、POST 1 件でファイルに書いて自動終了します。
 
 ## 付録 A. 根拠にした一次情報
 
