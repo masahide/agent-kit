@@ -73,7 +73,7 @@ export type Table = {
 }
 
 /**
- * ブラウザが POST する回答 JSON (mvp-design.md 7 章)。
+ * ブラウザが POST する回答 JSON (references/reply-format-v1.md の「回答 JSON」)。
  */
 export type AnswerV1 = {
   schemaVersion: 1

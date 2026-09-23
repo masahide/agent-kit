@@ -14,9 +14,44 @@ Mod がそれを回答固定形 (`【インタビュー回答】` で始まる�
 `status: "pending"` を返してターンを終えてもらい、以後は `clock.every` の監視が回答を検知して
 `$.prompt.submit` で user turn として届けます (非同期経路)。
 
-設計は [docs/document-interview-mod/mvp-design.md](../../docs/document-interview-mod/mvp-design.md)、
-背景は [docs/document-interview-mod/plan.md](../../docs/document-interview-mod/plan.md) にあります。
+背景と決定の記録は [docs/document-interview-mod/plan.md](../../docs/document-interview-mod/plan.md) にあります。
 対象は Claude Code 2.1.278 の Claude Mods (function hooks、早期アクセス) です。
+
+## 流れ
+
+```mermaid
+sequenceDiagram
+    participant U as 人
+    participant C as Claude
+    participant M as Mod
+    participant R as 受信サーバ (python3)
+    participant B as ブラウザ
+    C->>M: tool.call open_form(質問票 JSON)
+    M->>M: 検証 → ./interview/<label>.json と .html を書く
+    M->>R: $.process.run(sh -c "nohup python3 receiver.py ... &")
+    M->>M: port-file を最大 3 秒ポーリングして port と pid を得る
+    M->>B: $.process.run(open <url>) (macOS) / xdg-open (Linux)
+    M->>M: $.ui.open(pane) で URL と状態を表示
+    Note over M: $.clock.every(500ms) で回答ファイルを監視 (同期待ち中は経過秒数の更新だけ)
+    loop 同期待ち (waitSeconds まで、既定 300 秒)
+        M->>R: $.http.fetch(GET /wait?t=<token>&timeout=4)
+        R-->>M: 回答の POST か 4 秒で {"answered": true|false}
+    end
+    U->>B: 答えて [送信]
+    B->>R: POST /answer?t=<token> (JSON)
+    R->>R: <label>.answer.json を書き、保留中の /wait に応答して自動終了
+    alt waitSeconds 以内 (同期経路)
+        M->>M: 回答を読み (documentId と revision を照合)、固定形を作り、<label>.md を書き、ペインを閉じる
+        M-->>C: { result: {status:"answered", reply, files}, context }
+    else 上限到達・Esc で中断・受信サーバ喪失・waitSeconds が 0 (非同期経路)
+        M-->>C: { result: {status:"pending", url, files, wait}, context }
+        M->>M: 監視タイマーが回答を読み、固定形を作り、<label>.md を書く
+        M->>C: $.prompt.submit({ text: 回答固定形 })
+    end
+```
+
+同期経路があるのは、人が数分で答えるふつうの場合に、Claude のターンを切らずに回答を渡すためです。
+`pending` だけだと Claude のターンが一度終わり、回答は別の user turn として届きます。
 
 ## ファイル
 
@@ -109,7 +144,7 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 
 | ファイル | 中身 |
 | --- | --- |
-| `skills/document-interview/SKILL.md` | 手順、禁則、`open_form` の結果 (`answered` / `pending` / `cancelled` / `invalid` / `failed`) ごとの動き、Mod が無いときのフォールバック、証跡と完了報告 |
+| `skills/document-interview/SKILL.md` | 手順、禁則、`open_form` の結果 (`answered` / `pending` / `cancelled` / `invalid` / `failed`) ごとの動き、Mod が無いときの案内、証跡と完了報告 |
 | `references/form-spec-v1.md` | 質問票 JSON の書き方 (`hooks/form/validate.ts` の全規則とエラー文、完全な例) |
 | `references/reply-format-v1.md` | 回答固定形 v1 の契約と読み方 (`hooks/reply/format.ts` のゴールデンと一致) |
 | `references/question-lint.md` | ja-text-communication の規範番号順の自己検査表 |
@@ -144,10 +179,17 @@ npx -y -p typescript tsc -p plugins/document-interview --noEmit
 受信サーバ単体:
 
 ```sh
-python3 plugins/document-interview/scripts/receiver.py --port 0 --port-file /tmp/x.port.json --token t \
+python3 plugins/document-interview/scripts/receiver.py --port-file /tmp/x.port.json --token t \
   --html interview/spec-auth-01.html --out /tmp/x.answer.json
 curl "http://127.0.0.1:<port>/?t=t"                       # HTML (トークン無しは 403)
-curl "http://127.0.0.1:<port>/ping?t=t"                   # {"ok":true}
 curl "http://127.0.0.1:<port>/wait?t=t&timeout=4"          # 回答の POST か 4 秒まで保留 → {"answered":true|false}
 curl -X POST -d '{"answers":{}}' "http://127.0.0.1:<port>/answer?t=t"   # 書いて、保留中の /wait に応答してから終了
 ```
+
+`<port>` は `/tmp/x.port.json` の `port` です。
+
+## 実機で確かめていないこと (2026-09-23 時点)
+
+- Esc で中断したあと、保留中の `/wait` が戻ってから `pending` を返すまでが `lingerMs` (5 秒) に収まるか。
+- ペインの `Link` (`http://localhost:<port>`) を押したとき、ブラウザが 127.0.0.1 の受信サーバに届くか (`::1` に解決されたときの切り替え。curl では届く)。
+- `waitSeconds` の既定 300 秒の間、ツール呼び出しが進行中のままで、表示や他のフックに問題が出ないか。

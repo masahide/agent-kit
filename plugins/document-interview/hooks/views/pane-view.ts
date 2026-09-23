@@ -31,7 +31,7 @@ export type PaneActions = {
 }
 
 /**
- * 待機中のペイン (mvp-design.md 6 章)。8 行以内です。
+ * 待機中のペイン。8 行以内です。
  *
  * ```
  * インタビュー: <label>  (rev <revision>)

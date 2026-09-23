@@ -2,7 +2,7 @@ import type { AnswerV1 } from '../../hooks/form/form-v1'
 import { REPLY_CLOSING } from '../../hooks/reply/format'
 
 /**
- * 表・補足・全体コメントがすべてある回答 (mvp-design.md 7 章の例)。
+ * 表・補足・全体コメントがすべてある回答 (references/reply-format-v1.md の例)。
  */
 export const ANSWER_FULL: AnswerV1 = {
   schemaVersion: 1,
@@ -23,7 +23,7 @@ export const ANSWER_FULL: AnswerV1 = {
 }
 
 /**
- * ANSWER_FULL から期待する固定形 (mvp-design.md 8 章のゴールデン)。
+ * ANSWER_FULL から期待する固定形 (references/reply-format-v1.md のゴールデン)。
  */
 export const REPLY_FULL = [
   '【インタビュー回答】spec-auth-01',

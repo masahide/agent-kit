@@ -1,6 +1,6 @@
 # Document Interview Mod 計画書
 
-作成日: 2026-09-22 / 更新: 2026-09-23 (実装しなかった設計と将来の計画を削除) / 状態: 背景と決定の記録。実装の仕様は [mvp-design.md](mvp-design.md)、使い方は [usage.md](usage.md) にあります
+作成日: 2026-09-22 / 更新: 2026-09-23 (実装しなかった設計と将来の計画を削除) / 状態: 背景と決定の記録。実装の説明は [plugins/document-interview/README.md](../../plugins/document-interview/README.md)、使い方は [usage.md](usage.md) にあります
 
 ## 要点
 
@@ -93,7 +93,7 @@ Claude Mods では、plugin がツールを登録し、外部プロセス (受�
 
 採用しなかった案は次のとおりです。Q1 は `~/.claude/skills/` への配置、Q2 は選択肢ごとの `Button`、Q3 は本文 1 行と隠し context だけ、Q4 は最初から含める案でした。
 
-2026-09-22 には、答える面をペインからブラウザの HTML フォームに変えました。ペインの `Input` は 1 行だけで補足や表を書くには狭いこと、ブラウザ経路が検証 (4 章 V2, V4〜V6) で動いたことが理由です。詳細は [mvp-design.md](mvp-design.md) の 0 章にあります。
+2026-09-22 には、答える面をペインからブラウザの HTML フォームに変えました。ペインの `Input` は 1 行だけで補足や表を書くには狭いこと、ブラウザ経路が検証 (4 章 V2, V4〜V6) で動いたこと、akapen のシートの形 (結論ファースト、問いカード) を HTML でそのまま使えることが理由です。ペインは、回答を待つ間の URL と状態の表示だけに使います。
 
 ## 4. 検証結果 (スパイク、2026-09-22)
 
@@ -135,11 +135,3 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 | akapen 0.2.0 | `vendor/masao/akapen-skills-0.2.0/akapen/` | SKILL.md、`references/paper-spec-v3.md`、`reply-format.md`、`preflight.md`、`assets/shiteki/README.md` |
 | grilling-viz | `vendor/mathbullet/plugins/grilling-viz/skills/grilling-viz/` | SKILL.md、`scripts/answer.js`、`scripts/components.js`、`scripts/render.mjs`、`design-system/tokens.css` |
 | ja-text-communication | `vendor/mathbullet/plugins/ja-text-communication/skills/ja-text-communication/SKILL.md` | A〜H の規範 |
-
-## 付録 B. 型定義から確認した要点
-
-- `$.tool.register({ name, description, inputSchema })` で `mcp__<plugin>__<name>` が登録され、`tool.call` フックを `{ tool: "mcp__<plugin>__<name>" }` で受けて `{ result }` を返します。`session.start` 以降でないと登録できません。
-- `$.prompt.submit({ text })` は plugin 発の user turn です。origin は `{ kind: "plugin", name }` で、セッションが待機状態のときに実行されます。
-- `$.ui.open({ id, title, focus, ... })`。人の入力に応えた open はどの幅でも置かれ、plugin が自発的に開く場合は 144 列 (2 回目以降 110 列) 未満では描かれません。
-- `Link` の `href` は `https:` か `http://localhost` だけが通ります。
-- フックの時間予算は `HookBudget.ms = 10_000`。`$` 呼び出しの待ち中は時計が止まりますが、`$.clock` の待ちは予算に入ります。

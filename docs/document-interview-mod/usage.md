@@ -6,7 +6,7 @@
 - 人はブラウザで選択肢を選び、[送信] を押すだけです。回答は Claude に届き、Claude はそれを反映して文書を書きます。
 - 使うには、Claude Code の試験機能「Claude Mods」を有効にし、このリポジトリの `plugins/document-interview` を読み込みます。CLI と Desktop アプリのどちらでも使えます。
 
-Mod の内部構造は [plugins/document-interview/README.md](../../plugins/document-interview/README.md) と [mvp-design.md](mvp-design.md) にあります。このガイドは使う側の手順だけを扱います。
+Mod の内部構造は [plugins/document-interview/README.md](../../plugins/document-interview/README.md) にあります。このガイドは使う側の手順だけを扱います。
 
 ## 1. 用語
 
@@ -146,8 +146,8 @@ Desktop アプリでは、CLI と次の点が違います (2026-09-23 確認)。
 
 | 症状 | 対処 |
 |---|---|
-| Claude がフォームを出さず、チャットに Markdown の質問票を書いた | Mod が読み込まれていません。4.4 節で確かめます。その場で答えたいときは、Claude が示した形 (問い番号と選択肢の記号) でチャットに返信すれば、Claude はそれを回答として扱います。 |
-| 「python3 が見つからないため受信サーバを起動できませんでした」と言われた | python3 を入れてから頼み直します。すぐ答えたいときは、下の「送信できない」の手順で答えられます。 |
+| Claude が「Document Interview Mod が読み込まれていません」と言った | 4.4 節で確かめ、4.2 節か 4.3 節の手順で読み込み直します。 |
+| 「python3 が見つからないため受信サーバを起動できませんでした」と言われた | python3 を入れてから頼み直します。すぐ答えたいときは、下の「ブラウザが開かない」と同じ手順で答えられます。 |
 | [送信] すると「受信サーバが応答しません」と出て、JSON が表示された | 表示された JSON をそのまま Claude Code のチャットに貼ります。Claude はそれを回答として読みます。 |
 | ブラウザが開かない | `interview/<質問票の名前>.html` を直接ブラウザで開いて答えます。この場合 [送信] で JSON が表示されるので、それをチャットに貼ります。 |
 | 答えを間違えて送信した | チャットで「問 2 は B に変えて」のように伝えます。Claude は文書にそれを反映します。 |
@@ -165,16 +165,3 @@ Mod は、質問票ごとに `interview/` へ次のファイルを残します�
 | `<名前>.port.json` | 回答を受け取るサーバの接続先 (内部用) |
 
 これらは「なぜこの文書がこう決まったか」の記録です。Mod も Claude も消しません。不要になったら人が消します。このリポジトリでは `.gitignore` で `/interview/` を git の対象から外しています。
-
----
-
-## このガイドの決定事項
-
-このガイドは、Document Interview Mod 自身で質問票を出して決めました (`interview/usage-guide-01.json` と `interview/usage-guide-01.md`)。
-
-| 問い | 決定 |
-|---|---|
-| 読者 | Claude Code は使うが Claude Mods は初めての人 (選択 B)。そのため 4.1 節で有効化の考え方を説明しています |
-| 起動環境 | CLI と Desktop アプリの両方を載せ、Desktop アプリの違いを注意書きにする (選択 A、推奨案) |
-| Claude の手順の説明 | 利用者から見える動きだけを数行で書く (選択 A、推奨案)。詳しくは SKILL.md に任せます |
-| README との分担 | README の「Try it」節は残し、README の冒頭からこのガイドへリンクする (選択 A、推奨案) |

@@ -97,7 +97,7 @@ function parseWaitReply(text: string): boolean | null {
 }
 
 /**
- * `tool.call` の中で回答を待ちます (mvp-design.md 3 章の同期経路)。
+ * `tool.call` の中で回答を待ちます (README の「流れ」の同期経路)。
  *
  * 各周回: 待機中か → 回答ファイル → `signal.aborted` → 残り秒数 → `GET /wait?timeout=<4 秒以下>`。
  * フック予算 (10 秒) は `$` 呼び出しの待ち中は止まるので、`$.http.fetch` の保留は予算に

@@ -20,7 +20,7 @@ const isFilled = (value: unknown): value is string =>
   typeof value === 'string' && value.trim() !== ''
 
 /**
- * 質問票 JSON を検証します (mvp-design.md 5 章の規則)。
+ * 質問票 JSON を検証します (規則は references/form-spec-v1.md)。
  *
  * エラーは最初の 1 つで止めず、見つかった分を全部返します。
  * パスは `themes[0].questions[1].cite` の形です。

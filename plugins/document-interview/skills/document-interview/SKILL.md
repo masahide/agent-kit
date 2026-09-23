@@ -34,10 +34,9 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 ツール名は `mcp__document-interview__open_form` です。入力は次の形です。
 
 ```json
-{ "form": { "schemaVersion": 1, "documentId": "spec-auth-01", "revision": 1, "label": "spec-auth-01", "...": "..." }, "openBrowser": true, "waitSeconds": 300 }
+{ "form": { "schemaVersion": 1, "documentId": "spec-auth-01", "revision": 1, "label": "spec-auth-01", "...": "..." }, "waitSeconds": 300 }
 ```
 
-`openBrowser` は省略すると `true` です。`false` にするとブラウザを起動せず URL だけ返します (テスト用)。
 `waitSeconds` は呼び出しの中で回答を待つ上限 (秒) です。省略すると 300、上限は 1800、`0` なら待たずに `pending` を返します。ふつうは省略します。人がすぐには答えられないと分かっているときだけ `0` にします。
 
 結果は JSON の文字列です。`status` で分岐します。
@@ -57,18 +56,9 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 - 人がペインを閉じても Mod は回答を待ち続けます。ブラウザを閉じてしまったときは `/interview` で開き直せます (人に伝える文言)。
 - 人が [取り消す] を押すと、ツールが待っている間なら `cancelled` が返ります。`pending` のあとなら Claude には何も届きません。次のターンで人の指示を待ちます。
 
-## フォールバック (Mod が動かない環境)
+## Mod が読み込まれていないとき
 
-次の場合は Mod が動きません: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` が無い、`--plugin-dir` で読み込んでいない、人がいない自動実行 (`-p` や SDK) である。見分け方は、使えるツールの一覧に `mcp__document-interview__open_form` が無いことです。
-
-このときは手順 4 までは同じで、手順 5 を次に置き換えます。
-
-1. 質問票を `interview/<label>.json` に自分で書きます (証跡)。
-2. 質問票を Markdown で会話に出します (`references/preflight.md` の「質問票の Markdown」と同じ形。結論 → 用語 → 問いカード (番号、根拠、選択肢ごとの利点と代償、推奨) → 表)。
-3. 回答の書き方として、`references/reply-format-v1.md` の固定形を全問 `(未選択 = お任せ)` で埋めた雛形を示し、「この形で返してください。選ばない問いはそのままで構いません」と伝えて応答を終えます。
-4. 人の返答は固定形どおりでなくても、問い番号と選択肢 ID (または選択肢の文言) が読み取れれば受け付けます。読み取れない箇所は未選択として扱い、文書の決定事項にそう書きます。受け付けた回答を固定形に整えて `interview/<label>.md` に書き、手順 6 へ進みます。
-
-人がいない自動実行で答える人がいないと分かっているときは、質問票を出して終えるのではなく、全問を推奨案で確定し、文書の冒頭に「人に確認していない決定」として各問と選んだ案を列挙します。
+使えるツールの一覧に `mcp__document-interview__open_form` が無ければ、Mod が読み込まれていません。質問票を出さずに止まり、人に「Document Interview Mod が読み込まれていません」と伝えて、利用者ガイド (agent-kit の `docs/document-interview-mod/usage.md`) の 4 章「Mod を読み込む」を案内します。
 
 ## 証跡ファイル
 
@@ -76,11 +66,11 @@ Mod はセッションの作業ディレクトリの下 `interview/` に、質�
 
 | ファイル | 中身 | 書く側 |
 |---|---|---|
-| `interview/<label>.json` | 検証済みの質問票 | Mod (フォールバックでは Claude) |
+| `interview/<label>.json` | 検証済みの質問票 | Mod |
 | `interview/<label>.html` | 自己完結の HTML シート (`file://` でも開ける) | Mod |
 | `interview/<label>.port.json` | 受信サーバの `{"port", "pid"}` | 受信サーバ |
 | `interview/<label>.answer.json` | ブラウザが送った回答 JSON (同じ label の前回のものは `open_form` が起動前に消す) | 受信サーバ |
-| `interview/<label>.md` | 回答固定形 (`reply` または user turn として届いたものと同じ。末尾に改行 1 つ) | Mod (フォールバックでは Claude) |
+| `interview/<label>.md` | 回答固定形 (`reply` または user turn として届いたものと同じ。末尾に改行 1 つ) | Mod (`failed` で人が回答 JSON を貼ったときは Claude) |
 
 回答の正は届いた固定形 (`answered` の `reply`、または user turn) です。全体へのコメントに `---` や `## ` の行が含まれていて読み方に迷うときや、表のセルを原文で確かめたいときだけ `interview/<label>.answer.json` を読んで照合します。証跡は消しません。「なぜこの設計か」の答えになります。
 
@@ -98,6 +88,6 @@ Mod はセッションの作業ディレクトリの下 `interview/` に、質�
 ## Additional resources
 
 - `references/form-spec-v1.md` — 質問票 JSON の書き方。Mod の検証規則 (上限・必須・一意性・文字種) と完全な例。質問票を書く前に Read
-- `references/reply-format-v1.md` — 回答固定形 v1 の契約と読み方。回答 JSON の形とフォールバックの読み方
+- `references/reply-format-v1.md` — 回答固定形 v1 の契約と読み方。回答 JSON の形と、`failed` で貼られた回答の読み方
 - `references/question-lint.md` — 質問文の自己検査表 (ja-text-communication の規範番号順)
 - `references/preflight.md` — 試問の手順、質問票の Markdown の形、subagent に渡すプロンプトの雛形、打ち切り規則

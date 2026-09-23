@@ -117,7 +117,7 @@ Q2. ログの保持期間: (未選択 = お任せ)
 
 ## 回答 JSON (ブラウザが送る形)
 
-`interview/<label>.answer.json` の中身です。`failed` のフォールバックで人がチャットに貼るのも同じ形です。
+`interview/<label>.answer.json` の中身です。`failed` のときに人がチャットに貼るのも同じ形です。
 
 ```json
 {
@@ -140,6 +140,6 @@ Q2. ログの保持期間: (未選択 = お任せ)
 - `tables` のキーは表 ID、値は質問票の `rows` と同じ形の 2 次元配列 (`editable: false` のセルは質問票の値がそのまま入る)。
 - `globalNote` は全体へのコメント (空文字列あり)。`submittedAt` は送信時刻 (ISO 8601)。
 
-## フォールバックで固定形を Claude が作るとき
+## `failed` で回答 JSON が貼られたとき
 
-`open_form` が `failed` を返して人が回答 JSON を貼ったとき、または Mod が無く人が Markdown の質問票に会話で答えたときは、Claude が上の規則で固定形を組み立て、`interview/<label>.md` に書きます。人が固定形どおりに書かなくても、問い番号 (または問いの文) と選択肢 ID (または選択肢の文言) が読み取れれば受け付けます。読み取れない問いは `(未選択 = お任せ)` にし、決定事項にそう書きます。
+`open_form` が `failed` を返し、人が `file://` で開いたフォームの [送信] で出た回答 JSON をチャットに貼ったときは、Claude が上の規則で固定形を組み立て、`interview/<label>.md` に書きます。

@@ -313,7 +313,7 @@ function tableHtml(table: Table): string {
 }
 
 /**
- * 質問票 JSON から自己完結の HTML シートを作ります (mvp-design.md 7 章)。
+ * 質問票 JSON から自己完結の HTML シートを作ります。
  *
  * トークンは HTML に埋めません。ブラウザの JS が URL の `?t=` から読んで
  * POST に付けるので、生成した HTML はそのまま受信サーバが配れます。

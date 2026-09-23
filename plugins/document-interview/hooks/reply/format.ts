@@ -26,7 +26,7 @@ const rowOf = (cells: string[]): string =>
   `|${cells.map(cell => (cell === '' ? ' ' : ` ${cell} `)).join('|')}|`
 
 /**
- * 回答 JSON と質問票から回答固定形 v1 (mvp-design.md 8 章) を作ります。
+ * 回答 JSON と質問票から回答固定形 v1 (references/reply-format-v1.md) を作ります。
  *
  * - `Qn.` は質問票の並び順 (テーマ順 → 問い順) で 1 から振ります。
  * - 選択肢は `<id> — <label>`。補足が空なら ` / 補足:` を省きます。
