@@ -47,7 +47,7 @@ export const cleanupArgv = (paths: Pick<ReceiverPaths, 'out' | 'portFile'>): str
 
 /**
  * 受信サーバを切り離して起動する argv。`nohup ... &` で背景に回し、`echo started`
- * ですぐ戻ります (plan.md 11 章 V2)。
+ * ですぐ戻ります (plan.md 4 章 V2)。
  *
  * @param paths ファイルの置き場
  * @param token `?t=` で照合するトークン

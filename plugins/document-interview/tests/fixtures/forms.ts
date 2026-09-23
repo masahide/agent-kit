@@ -1,7 +1,7 @@
 import type { FormV1 } from '../../hooks/form/form-v1'
 
 /**
- * plan.md 5.2 節の質問票 (問いを 2 つにし、表を 1 つ付けたもの)。
+ * references/form-spec-v1.md の完全な例の質問票 (問いを 2 つにし、表を 1 つ付けたもの)。
  * 手動確認用の JSON は同じ内容を `spec-auth-01.form.json` に置いてあります。
  */
 export const FORM: FormV1 = {

@@ -131,7 +131,7 @@ describe('register', () => {
 
     expect(world.submitted).toHaveLength(1)
     expect(world.submitted[0]?.text).toBe(Fixtures.REPLY_FULL)
-    // 回答 JSON は context に添えない (2.1.278 では plugin 自身の prompt.submit フックが自分の投入を見ないため。plan.md 11 章 V7)。
+    // 回答 JSON は context に添えない (2.1.278 では plugin 自身の prompt.submit フックが自分の投入を見ないため。plan.md 4 章 V7)。
     expect(world.submitted[0]?.context).toBeUndefined()
 
     expect(world.files.get('/work/interview/spec-auth-01.md')).toBe(`${Fixtures.REPLY_FULL}\n`)

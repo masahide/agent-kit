@@ -1,5 +1,5 @@
 /**
- * 質問票 JSON スキーマ v1 (plan.md 5.2 節)。
+ * 質問票 JSON スキーマ v1 (skills/document-interview/references/form-spec-v1.md)。
  *
  * Claude が `open_form` ツールに渡す形です。検証は `validate.ts` が行い、
  * 通ったものだけがこの型として扱われます。

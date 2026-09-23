@@ -1,5 +1,5 @@
 /**
- * `$.tool.register` の `inputSchema`。質問票 JSON スキーマ v1 (plan.md 5.2 節) を
+ * `$.tool.register` の `inputSchema`。質問票 JSON スキーマ v1 (skills/document-interview/references/form-spec-v1.md) を
  * JSON Schema で書いたものです。細かい規則 (問いの数、ID の一意性など) は
  * `validate.ts` が検査し、エラーを Claude に返します。
  */

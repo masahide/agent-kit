@@ -58,7 +58,7 @@ Mod がそれを回答固定形 (`【インタビュー回答】` で始まる�
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
 
-回答 JSON は user turn の隠し context には添えません。Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないため (実測、plan.md 11 章 V7)、回答 JSON は `interview/<label>.answer.json` を読んで照合します。
+回答 JSON は user turn の隠し context には添えません。Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないため (実測、plan.md 4 章 V7)、回答 JSON は `interview/<label>.answer.json` を読んで照合します。
 
 ## What it calls on `$`
 

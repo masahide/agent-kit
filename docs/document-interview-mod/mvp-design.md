@@ -1,20 +1,20 @@
-# Document Interview Mod MVP 設計 (M1〜M3、ブラウザ経路)
+# Document Interview Mod MVP 設計 (ブラウザ経路)
 
-作成日: 2026-09-22 / 更新: 2026-09-23 (同期待ち、`/wait`、ステータス名、古い回答の削除) / 状態: MVP 実装済み (2026-09-22、実機 E2E 済み)。同期待ちは 2026-09-23 に実装、テストと受信サーバ単体 (python3 + curl) で確認済み、実機 E2E は未 / 前提: [plan.md](plan.md) の 2, 4, 5.2, 5.5, 6, 11 章
+作成日: 2026-09-22 / 更新: 2026-09-23 (同期待ち、`/wait`、ステータス名、古い回答の削除) / 状態: MVP 実装済み (2026-09-22、実機 E2E 済み)。同期待ちは 2026-09-23 に実装し、Desktop で `answered` まで確認済み (14 章) / 前提: [plan.md](plan.md) の 2〜4 章
 
 ## 0. plan.md からの変更点
 
-plan.md の 5 章は「ペインで答える」設計でしたが、2026-09-22 に利用者が「ブラウザの HTML フォームで答え、回答を Mod に POST で戻す」経路を選びました。理由は次の 3 つです。
+当初の plan.md は「ペインで答える」設計でしたが、2026-09-22 に利用者が「ブラウザの HTML フォームで答え、回答を Mod に POST で戻す」経路を選びました。理由は次の 3 つです。
 
 - ペインの `Input` は 1 行のみで、補足や表を書くには狭い。ブラウザなら複数行と表が普通に書ける。
 - akapen のシート規約 (結論ファースト、問いカード、絵) をそのまま HTML で活かせる。
-- この経路はスパイク V2, V4, V5, V6 (plan.md 11 章) で実機検証済み。ペインの描画は未検証。
+- この経路はスパイク V2, V4, V5, V6 (plan.md 4 章) で実機検証済み。ペインの描画は未検証。
 
 ペインは「URL と状態の表示、ブラウザを開き直すボタン」だけに使います。人が答える面はブラウザです。
 
 ## 1. 範囲
 
-MVP は plan.md の F-1〜F-7 です。加えて、ブラウザでは安価なので表 (F-9) と下書きの `localStorage` 保存 (F-10 の簡易版) も入れます。F-8, F-11 (`/interview` は状態表示と開き直しだけ入れる), F-12, F-13, F-14 は後続です。
+範囲は、ツール `open_form`、質問票の検証、HTML シート (表と `localStorage` の下書き保存を含む)、回答の回収と回答固定形、証跡の保存、`/interview` (開き直し) です。
 
 ## 2. ファイル構成
 
@@ -89,7 +89,7 @@ sequenceDiagram
 | イベント | 絞り込み | すること |
 |---|---|---|
 | `session.start` | なし | `$` を host に束ねる。`$.tool.register({ name: "open_form", ... })` と `$.command.register({ name: "interview", ... })`。`e.cwd` を保持する |
-| `tool.call` | `{ tool: "mcp__document-interview__open_form" }` | 3 章の流れ。検証エラーは `{ result: JSON.stringify({ status: "invalid", errors: [...] }) }` を返す (deny ではない。Claude が直して再送できるように)。結果は文字列 (plan.md V3)。受信サーバ起動前に同じ label の前回の `.answer.json` と `.port.json` を `rm -f` で消す。起動後は `waitSeconds` まで同期待ち (`next.signal.aborted` で打ち切り) |
+| `tool.call` | `{ tool: "mcp__document-interview__open_form" }` | 3 章の流れ。検証エラーは `{ result: JSON.stringify({ status: "invalid", errors: [...] }) }` を返す (deny ではない。Claude が直して再送できるように)。結果は文字列 (plan.md 4 章 V3)。受信サーバ起動前に同じ label の前回の `.answer.json` と `.port.json` を `rm -f` で消す。起動後は `waitSeconds` まで同期待ち (`next.signal.aborted` で打ち切り) |
 | `command.run` | `{ command: "interview" }` | 待機中の質問票があればペインを開き直しブラウザも開き直す。無ければ `{ text: "待機中の質問票はありません" }` |
 | `ui.render` | `{ component: "Pane" }` かつ `e.requestId === PANE_ID` | 6 章のペインを描く |
 | `ui.close` | `{ id: PANE_ID }` | 人が閉じても監視は続ける。`$.ui.status("/interview で開き直せます")`。`next(e)` |
@@ -102,7 +102,7 @@ sequenceDiagram
 
 `inputSchema` は `{ type: "object", properties: { form: <質問票 JSON のスキーマ>, openBrowser: { type: "boolean" }, waitSeconds: { type: "integer", minimum: 0, maximum: 1800 } }, required: ["form"] }`。`openBrowser` の既定は true。false ならブラウザを起動せず URL だけ返す (テストと `-p` 実行用)。`waitSeconds` は呼び出しの中で回答を待つ上限 (秒)。既定 300、0 で待たない (従来どおり即 `pending`)、上限 1800。範囲外は丸め、数でなければ既定。
 
-質問票 JSON スキーマ v1 は plan.md 5.2 節のとおりです。検証規則:
+質問票 JSON スキーマ v1 の正本は `skills/document-interview/references/form-spec-v1.md` です。検証規則:
 
 - `schemaVersion === 1`。`documentId` と `label` は `^[A-Za-z0-9_-]{1,64}$`。`revision` は 1 以上の整数。
 - `title`, `conclusion` は空でない文字列。`glossary` は省略可。各要素は `term` と `definition`。
@@ -173,7 +173,7 @@ http://127.0.0.1:<port>/?t=<token>
 
 ## 8. 回答固定形 v1
 
-plan.md 5.5 節のとおり。`hooks/reply/format.ts` が作ります。
+正本は `skills/document-interview/references/reply-format-v1.md` です。`hooks/reply/format.ts` が作ります。
 
 ```
 【インタビュー回答】spec-auth-01
@@ -199,7 +199,7 @@ Q2. ログの保持期間: (未選択 = お任せ)
 - 末尾の `---` と締めの 1 文は不変。
 - 回答 JSON に質問票に無い ID があれば無視する。質問票にあって回答に無い問いは未選択として扱う。
 
-回答 JSON は隠し context には添えません。当初は `prompt.submit` フックで `【インタビュー回答 JSON】` として添える設計でしたが、Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないことを実測しました (plan.md 11 章 V7)。`$.prompt.submit` の引数にも `context` はありません (`PromptSubmitArgs` は `context` を除いた型)。Claude は `interview/<label>.answer.json` を読んで照合します。
+回答 JSON は隠し context には添えません。当初は `prompt.submit` フックで `【インタビュー回答 JSON】` として添える設計でしたが、Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないことを実測しました (plan.md 4 章 V7)。`$.prompt.submit` の引数にも `context` はありません (`PromptSubmitArgs` は `context` を除いた型)。Claude は `interview/<label>.answer.json` を読んで照合します。
 
 ## 9. 受信サーバ `scripts/receiver.py`
 
@@ -252,31 +252,7 @@ idle --/interview--> "待機中の質問票はありません"
 
 テストは `claude-code/testing` の kit で書きます。`$` の下の世界は `on('process.run', ...)`, `on('fs.write', ...)`, `on('fs.read', ...)`, `on('fs.exists', ...)`, `on('http.fetch', ...)`, `on('tool.register', ...)`, `on('command.register', ...)`, `on('ui.open', ...)`, `on('ui.close', ...)`, `on('ui.log', ...)`, `on('ui.status', ...)`, `on('prompt.submit', ...)` で答えます。`mock.clock(on)` で時間を進めます。ファイルはテスト内の `Map<string, string>` で模し、`rm -f` は Map から消します。`http.fetch` は `/wait` の答え (`{ answered }` か失敗) を台本で返します。
 
-最低限のケース:
-
-1. `session.start` でツールとコマンドが登録される (名前を照合)。
-2. 正しい質問票で `$.tool.call({ tool: 'mcp__document-interview__open_form', form, openBrowser: false })` を呼ぶと、`interview/<label>.json` と `.html` が書かれ、`process.run` の argv に `receiver.py` と `--token` が含まれ、port-file を模した後に `result` の JSON が `status: "opened"` と URL を持つ。`context` が 1 件ある。
-3. 不正な質問票 (6 問、`cite` 空、`recommended` が 2 つ、`pros` 空) で `status: "invalid"` と全エラーが返る。`process.run` は呼ばれない。
-4. 回答ファイルを置いて `clock.advance(500)` すると、`prompt.submit` が固定形のテキストで 1 回だけ呼ばれ、`interview/<label>.md` が同じ内容で書かれ、`ui.close` が呼ばれる。もう一度 advance しても 2 回目は呼ばれない。
-5. `prompt.submit` フックが origin plugin (自分) のときだけ context を添える。origin composer には添えない。
-6. `/interview` が待機中ならペインを開き、待機中でなければその旨の text を返す。
-7. `validate.test.ts`: 規則ごとに 1 ケース。
-8. `format.test.ts`: fixtures の質問票と回答から期待する固定形 (ゴールデン) と完全一致。表あり・無し、補足あり・無し、全体コメント無しの 4 通り。
-9. `render-html.test.ts`: `id="di-form"` の JSON が入力と等しい、問いの数だけ `name="q-<id>"` の radio 群がある、`__TOKEN__` が残っていない (トークンは受信サーバ側で埋めるか、HTML 生成時に埋めるか、一方に決める)。
-
-`$.ui.mount` でペインを描くテストも 1 つ入れる (`surface: 'terminal'`、`Button` の label が「ブラウザで開く」と「取り消す」)。
-
-同期待ちと不具合修正のケース (2026-09-23 に追加):
-
-10. 同じ label の古い `.answer.json` が残っていても `open_form` が消すので拾わない (`rm -f` が受信サーバの起動より前に走る)。
-11. 回答 JSON の `documentId` か `revision` が質問票と違えば無視し、一致すれば届ける。
-12. 同期待ち中に回答が届くと `answered` と固定形 (`reply`) を返し、`prompt.submit` は呼ばれない。`/wait` は `timeout=4` で呼ぶ。
-13. `waitSeconds: 6` が過ぎると `pending` (`wait: { seconds: 6, endedBy: "timeout" }`) を返し (`/wait` は 4 秒 + 2 秒)、その後の回答は `prompt.submit` で 1 回だけ届く。
-14. `/wait` に届かないと `pending` (`receiverLost`) を返し、監視は続く。
-15. 同期待ち中に [取り消す] を押すと `cancelled` を返し、何も届かない。
-16. `waitSeconds: 0` なら `/wait` を呼ばず即 `pending` (`skipped`)。
-17. `surface: 'desktop'` の `$.ui.mount` で `Link` の href が `http://localhost:<port>/?t=…`。
-18. `sync-wait.test.ts` (単体): `next.signal` が abort すると次の周回で `pending` (`abort`) を返し `/wait` を呼び直さない (テストキットにフックの signal を abort させる手段が無いため、`AbortController` で関数を直接試す)。`/wait` が失敗しても回答ファイルがあれば `answered`。`answered:true` なのに一致する回答が無ければ空回りせず打ち切る。差し替えで `dropped`。
+ケースの正本は `plugins/document-interview/tests/` (`register.test.ts`, `validate.test.ts`, `format.test.ts`, `render-html.test.ts`, `sync-wait.test.ts`) です。
 
 ## 12. 静的検証と型
 
@@ -291,9 +267,8 @@ CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir plugins/document-intervi
 
 対話モードで「tests/fixtures の質問票を open_form で開いて」と頼み、ブラウザで答えて [送信] し、ツールの結果が `answered` で `reply` に【インタビュー回答】が入ることを見ます。`waitSeconds: 0` で頼めば従来どおり user turn として届くことを見ます。
 
-同期待ちで実機で確かめていないこと (2026-09-23 時点):
+同期待ちで実機で確かめていないこと (2026-09-23 時点。`/wait` を保留したまま待てることは 14 章の Desktop で確認済み):
 
-- `$.http.fetch` が 4 秒応答を保留する `/wait` をそのまま待つか (ホスト側のタイムアウトの有無は型定義に書かれていない)。
 - Esc で中断したあと、保留中の fetch が戻ってから `pending` を返すまでが `lingerMs` (5 秒) に収まるか。
 - terminal の OSC 8 と desktop のアンカーで `http://localhost:<port>` の `Link` を押したとき、ブラウザが 127.0.0.1 の受信サーバに届くか (`::1` に解決されたときの切り替え)。
 - `waitSeconds` の既定 300 秒の間、ツール呼び出しが進行中のままで問題が無いか (表示、他のフックとの干渉)。
