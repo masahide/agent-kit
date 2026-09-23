@@ -191,7 +191,7 @@ export function world(on: On, options: WorldOptions = {}) {
 
   on('ui.open', ($, e) => {
     opened.push(e)
-    return { value: undefined }
+    return { value: { isPlaced: true } }
   })
 
   on('ui.close', ($, e) => {
