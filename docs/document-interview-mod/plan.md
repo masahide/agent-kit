@@ -1,11 +1,12 @@
 # Document Interview Mod 計画書
 
-作成日: 2026-09-22 / 更新: 2026-09-23 (実装しなかった設計と将来の計画を削除) / 状態: 背景と決定の記録。実装の説明は [plugins/document-interview/README.md](../../plugins/document-interview/README.md)、使い方は [usage.md](usage.md) にあります
+作成日: 2026-09-22 / 更新: 2026-09-23 (実装しなかった設計と将来の計画を削除。文書の検査表を追加) / 状態: 背景と決定の記録。実装の説明は [plugins/document-interview/README.md](../../plugins/document-interview/README.md)、使い方は [usage.md](usage.md) にあります
 
 ## 要点
 
 - 文書を書く前に Claude が論点を整理し、一枚のフォームとして人に出し、人がまとめて答え、その回答を Claude が読んで設計書・仕様書・企画書・記事を書く仕組みを、Claude Mods として作りました。
 - 元ネタは 3 つです。akapen からは「決定だけを人に聞く」出題規律と回答の固定形と試問を、grilling-viz からは質問データの型と回答の保持を、ja-text-communication からは質問文と生成文書の日本語規範を引き継ぎます。
+- 生成文書の検査には、AI 臭 (生成 AI が書いた文章に出やすい癖) を消すスキル stop-ai-slop-jp と humanizer-ja の規則も取り込みます。元のスキルは同梱せず、決定を記録する文書に合う規則だけを書き直しました (2.4 節)。
 - 当初はペインの中で答える設計でしたが、検証 (4 章) を経て、ブラウザの HTML フォームで答えて受信サーバに POST で戻す経路にしました。回答はツールの結果か、`$.prompt.submit` による user turn で Claude に届きます。
 
 ## 用語
@@ -78,7 +79,26 @@ Claude Mods では、plugin がツールを登録し、外部プロセス (受�
 | E2, E7: 要点先行、確認質問には判断材料を添える | 結論ボックスと、選択肢ごとの `pros` と `cons` |
 | F2, F3: 推測と事実を分け、一次情報を優先する | `cite` 欄の必須化と、試問の「引用の有無」検査 |
 | H1: ユーザーの指定語を一字一句そのまま使う | 回答固定形に人の自由記述を改変せず載せる |
-| 全体: 生成文書の文章規範 | 文書生成の手順で ja-text-communication スキルを参照する |
+| 全体: 生成文書の文章規範 | 文書の検査表 (`references/document-lint.md`) の 1 章と 2 章。ja-text-communication のスキル本体は同梱しないので、規範ごとの要約を表に書く |
+| G2: 変更の報告を差分と一対一に対応させる | SKILL.md の完了報告。既存の文書を更新したときは、変えた節と理由の一覧を出す |
+
+### 2.4 stop-ai-slop-jp と humanizer-ja から引き継ぐもの
+
+stop-ai-slop-jp と humanizer-ja は、生成 AI が書いた日本語から AI 臭を消すための Claude のスキルです。AI 臭とは、定型の前置き、人ではなくモノを主語にした書き方、根拠のない強調など、生成 AI の文章に出やすい癖を指します。どちらのスキルも、ブログやエッセイを人の声で書き直すことを主な対象にしています。この Mod が書くのは決定を記録する文書なので、元のスキルは同梱しません。合う規則だけを `references/document-lint.md` の 3 章 (S1〜S24) に書き直しました。
+
+| 引き継ぐもの | 元 | Mod での置き場所 |
+|---|---|---|
+| 修正の優先順位 (立場、主体、構造、語彙、記号の順に直す) | stop-ai-slop-jp | document-lint.md の 3 章の並び (決定、主体、構造、語彙、記号) と 5 章の通し方 |
+| 結論の回避、全方位肯定、ヘッジの重ね、弱い否定、節ごとの保留文 | stop-ai-slop-jp | S1〜S5 (決定) |
+| モノに人の動作をさせる書き方、翻訳調の分析動詞、一般論 | stop-ai-slop-jp | S6〜S8 (主体) |
+| 主張や問いかけの見出し、定型の書き出しと締め、予告、対比と否定の演出、事実の後の意義の付け足し、3 つに揃える癖、書式の過剰 | 両方 | S9〜S14 (構造) |
+| 生成 AI が好む抽象語、比喩の定型、カタカナ語とビジネス語、冗長な文末、強調の副詞、接続詞の重ね、論文調の自称 | 両方 | S15〜S21 (語彙) |
+| ダッシュ、かぎ括弧、中黒の並列、絵文字 | 両方 | S22〜S24 (記号)。検索用の正規表現を 5 章の手順 4 に置く |
+| 5 つの軸での自己採点 | stop-ai-slop-jp | 5 章の手順 5。点数ではなく、通過か不通過かを答える 5 つの問いにした。書き手の自己採点は甘くなるから (試問を設けた理由と同じ) |
+| 書き終えた後の読み直し (音読、「AI が書いたと思うか」の自問) | 両方 | 5 章の手順 6 |
+| 語彙と記号の検査を質問文にも当てる | 両方 | `references/question-lint.md` の通し方の手順 2 |
+
+採用しなかった規則は、伝聞の文末、文末とトーンのムラ、毒と感情の表明、一人称、主語の省略などです。どれも ja-text-communication の規範 (F1、F2、B5、C2 など) とぶつかるか、決定を記録する文書の読者の役に立ちません。一覧と理由は document-lint.md の 4 章にあります。
 
 ## 3. 決定事項
 
@@ -135,3 +155,5 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 | akapen 0.2.0 | `vendor/masao/akapen-skills-0.2.0/akapen/` | SKILL.md、`references/paper-spec-v3.md`、`reply-format.md`、`preflight.md`、`assets/shiteki/README.md` |
 | grilling-viz | `vendor/mathbullet/plugins/grilling-viz/skills/grilling-viz/` | SKILL.md、`scripts/answer.js`、`scripts/components.js`、`scripts/render.mjs`、`design-system/tokens.css` |
 | ja-text-communication | `vendor/mathbullet/plugins/ja-text-communication/skills/ja-text-communication/SKILL.md` | A〜H の規範 |
+| stop-ai-slop-jp 0.1.1 (MIT、Daichi Nagashima) | https://github.com/iKora128/stop-ai-slop-jp (コミット `e09d327`、2026-06-11) | SKILL.md、`references/phrases.md`、`references/structures.md` |
+| humanizer-ja 1.0.0 (MIT、SuguruKun_ai) | https://github.com/gonta223/humanizer-ja (コミット `a1e3436`、2026-03-23) | SKILL.md の 20 パターンと「声」の節 |

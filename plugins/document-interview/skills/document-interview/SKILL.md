@@ -26,7 +26,7 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 3. **質問文の検査** — `references/question-lint.md` の表で自己検査します。読者が知らない語は `glossary` に入れます。Claude が作った ID や記号名 (`q1`, `tb1`, 変数名) を問いの文に出しません。
 4. **試問 (preflight)** — `references/preflight.md` の手順で、`Agent` ツールで文脈ゼロの subagent を立て、質問票を Markdown に落として渡し、5 つの検査を出します。結果を受け取るまで次に進みません。落ちた問いは直して同じ subagent に差分だけを再試問し、計 2 巡で打ち切ります。
 5. **`open_form` を呼び、結果で分岐する** — 下の「open_form の呼び方と結果」のとおりに呼びます。ツールは既定で 300 秒まで回答を待ちます。`answered` が返ったら `reply` が回答です。手順 6 へ進みます。`pending` が返ったら、人に「ブラウザのフォームで答えて [送信] を押してください。閉じてしまったら `/interview` で開き直せます」と伝えて応答を終えます。回答は `【インタビュー回答】<documentId>` で始まる user turn として届きます。届くまで文書を書きません。
-6. **回答の反映** — 届いた固定形 (`answered` の `reply`、または user turn) を `references/reply-format-v1.md` の規則で読みます。お任せ (未選択) の問いは推奨案で確定します。補足と全体へのコメントは一字一句そのまま扱います。文書は ja-text-communication の規範 (要点先行、一文一義、用語の初出定義、英単語に助詞を直結しない) で書きます。文書の冒頭か末尾に「決定事項」として、各問の決定とお任せで確定した項目を書きます。
+6. **回答の反映** — 届いた固定形 (`answered` の `reply`、または user turn) を `references/reply-format-v1.md` の規則で読みます。お任せ (未選択) の問いは推奨案で確定します。補足と全体へのコメントは一字一句そのまま扱います。文書を書く前に `references/document-lint.md` を Read し、1 章 (読者、冒頭の一文、各節で言い切る決定、質問票から引き継ぐもの) を決めます。書いた後は同じファイルの 5 章の順に検査して直します。文書の冒頭か末尾に「決定事項」として、各問の決定とお任せで確定した項目を書きます。
 7. **2 枚目 (必要なら)** — 回答で設計が変わり、新しい論点が生まれたときだけ、同じ `documentId` で `revision` を進めた質問票を作ります。`label` は必ず変えます (例: `spec-auth-01` → `spec-auth-01-r2`)。同じ `label` を使うと前の質問票の証跡 `interview/<label>.*` が上書きされます (Mod は起動前に前回の `.answer.json` を消し、`documentId` と `revision` が違う回答を無視するので、古い回答を拾うことはありません)。捨てた案は文書に残します (「採用しなかった案」の節)。
 
 ## open_form の呼び方と結果
@@ -80,6 +80,7 @@ Mod はセッションの作業ディレクトリの下 `interview/` に、質�
 
 - 書いた (更新した) 文書
 - 質問票 `interview/<label>.json` と回答 `interview/<label>.md` (2 枚目があればそれも)
+- 既存の文書を更新したときは、変えた節と変えた理由の一覧 (報告と差分を一対一に対応させます。ja-text-communication G2)
 - 各問の決定 (お任せで確定した項目は「推奨案で確定」と明記)
 - 人に確認していない仮定があればその一覧
 
@@ -90,4 +91,5 @@ Mod はセッションの作業ディレクトリの下 `interview/` に、質�
 - `references/form-spec-v1.md` — 質問票 JSON の書き方。Mod の検証規則 (上限・必須・一意性・文字種) と完全な例。質問票を書く前に Read
 - `references/reply-format-v1.md` — 回答固定形 v1 の契約と読み方。回答 JSON の形と、`failed` で貼られた回答の読み方
 - `references/question-lint.md` — 質問文の自己検査表 (ja-text-communication の規範番号順)
+- `references/document-lint.md` — 文書の検査表 (ja-text-communication の規範と AI 臭の検査)。回答を反映して文書を書く前に Read
 - `references/preflight.md` — 試問の手順、質問票の Markdown の形、subagent に渡すプロンプトの雛形、打ち切り規則
