@@ -13,11 +13,13 @@ import {
 } from './names'
 import {
   cleanupArgv,
-  killArgv,
+  isPython3,
   linkUrlOf,
   openBrowserArgv,
   parsePortFile,
+  PYTHON_CANDIDATES,
   receiverArgv,
+  stopArgv,
   urlOf,
   type ReceiverInfo,
 } from './receiver'
@@ -99,7 +101,7 @@ type Pending = {
 export function register(on: On) {
   let host: Host | null = null
   let cwd = ''
-  let pythonProbe: Promise<boolean> | null = null
+  let pythonProbe: Promise<readonly string[] | null> | null = null
   let pending: Pending | null = null
   let isPaneOpen = false
   let elapsedSeconds = 0
@@ -122,13 +124,19 @@ export function register(on: On) {
     `${nowMs.toString(16)}${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`
 
   /**
-   * python3 があるかを 1 回だけ確かめ、結果を保持します。
+   * Python 3 を起動する argv を `PYTHON_CANDIDATES` の順に 1 回だけ探し、結果を保持します。
+   * どれも Python 3 でなければ null です。
    */
-  function hasPython(engine: Host): Promise<boolean> {
-    pythonProbe ??= engine
-      .run(['python3', '--version'], { timeoutMs: 10000 })
-      .then(result => result.exitCode === 0)
-      .catch(() => false)
+  function pythonOf(engine: Host): Promise<readonly string[] | null> {
+    pythonProbe ??= (async () => {
+      for (const candidate of PYTHON_CANDIDATES) {
+        const result = await engine.run([...candidate, '--version'], { timeoutMs: 10000 }).catch(() => null)
+        if (result && isPython3(result)) {
+          return candidate
+        }
+      }
+      return null
+    })()
     return pythonProbe
   }
 
@@ -156,7 +164,9 @@ export function register(on: On) {
   }
 
   function openBrowser(engine: Host, url: string) {
-    void engine.run(openBrowserArgv(url), { timeoutMs: 10000 }).catch(() => undefined)
+    void pythonOf(engine)
+      .then(python => python && engine.run(openBrowserArgv(python, engine.pluginRoot, url), { timeoutMs: 10000 }))
+      .catch(() => undefined)
   }
 
   async function openPane(engine: Host, focus: boolean) {
@@ -175,7 +185,7 @@ export function register(on: On) {
   }
 
   /**
-   * 待機中の質問票を片付けます: 受信サーバを kill、監視を止め、ペインを閉じます。
+   * 待機中の質問票を片付けます: 受信サーバを止め、監視を止め、ペインを閉じます。
    * 同期待ちの最中なら、次の周回で `dropReason` を見て `cancelled` を返します。
    */
   async function dropPending(engine: Host, reason: DropReason) {
@@ -187,7 +197,12 @@ export function register(on: On) {
     current.dropReason = reason
     current.timer.cancel()
     engine.status(undefined)
-    await engine.run(killArgv(current.receiver.pid), { timeoutMs: 5000 }).catch(() => undefined)
+    const python = await pythonOf(engine)
+    if (python) {
+      await engine
+        .run(stopArgv(python, engine.pluginRoot, current.receiver.pid), { timeoutMs: 5000 })
+        .catch(() => undefined)
+    }
     await closePane(engine)
   }
 
@@ -297,7 +312,7 @@ export function register(on: On) {
       engine.uiLog(`/${COMMAND_NAME} を登録できませんでした: ${String(error)}`)
     }
 
-    void hasPython(engine)
+    void pythonOf(engine)
 
     return next(e)
   })
@@ -325,15 +340,19 @@ export function register(on: On) {
     await engine.writeFile(paths.form, `${JSON.stringify(form, null, 2)}\n`)
     await engine.writeFile(paths.html, renderHtml({ form, date }))
 
-    if (!(await hasPython(engine))) {
+    const python = await pythonOf(engine)
+    if (!python) {
       return failed(STRINGS.noPython, paths)
     }
 
     // 同じ label の前回の回答と port-file を消す (残っていると古い回答を拾う)
-    await engine.run(cleanupArgv({ out: paths.answer, portFile: paths.portFile }), { timeoutMs: 5000 }).catch(() => undefined)
+    await engine
+      .run(cleanupArgv(python, engine.pluginRoot, { out: paths.answer, portFile: paths.portFile }), { timeoutMs: 5000 })
+      .catch(() => undefined)
 
     const token = tokenOf(nowMs)
     const argv = receiverArgv(
+      python,
       { pluginRoot: engine.pluginRoot, html: paths.html, out: paths.answer, portFile: paths.portFile },
       token,
     )

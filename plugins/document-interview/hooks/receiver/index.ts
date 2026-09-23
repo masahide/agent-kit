@@ -1,5 +1,9 @@
 /**
  * 受信サーバ (scripts/receiver.py) の起動引数と、port-file の読み取り、URL。
+ *
+ * Mod はシェル (sh) を使わず、`<python> receiver.py <サブコマンド>` だけを `$.process.run` に渡します。
+ * 背景での起動、ブラウザ、ファイルの削除、プロセスの停止の OS ごとの違いは receiver.py が吸収するので、
+ * macOS、Linux、Windows で同じ argv になります。
  */
 
 /**
@@ -25,39 +29,54 @@ export type ReceiverInfo = {
 }
 
 /**
- * `sh -c` に渡す 1 引数を単引用符で囲みます。
+ * Python 3 を起動する argv の候補。先に見つかったものを使います。
+ *
+ * Windows の `python3` は、Python が入っていても Microsoft Store の案内だけを出す
+ * スタブに当たることがあるので、`python` と `py -3` (Windows の Python ランチャー) も試します。
  */
-export const shellQuoted = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
+export const PYTHON_CANDIDATES: readonly (readonly string[])[] = [['python3'], ['python'], ['py', '-3']]
+
+/**
+ * `<python> --version` の結果が Python 3 のものか。スタブの案内文や Python 2 は落とします。
+ */
+export const isPython3 = (result: { exitCode: number; stdout: string; stderr: string }): boolean =>
+  result.exitCode === 0 && /^Python 3\./m.test(`${result.stdout}\n${result.stderr}`)
+
+const scriptOf = (pluginRoot: string): string => `${pluginRoot}/scripts/receiver.py`
 
 /**
  * 受信サーバを起動する前に、同じ label の前回の回答ファイルと port-file を消す argv。
  * 消さないと、同じ label を使い回したときに Mod が前回の回答を新しい回答として拾います。
  */
-export const cleanupArgv = (paths: Pick<ReceiverPaths, 'out' | 'portFile'>): string[] => [
-  'rm',
-  '-f',
-  paths.out,
-  paths.portFile,
-]
+export const cleanupArgv = (
+  python: readonly string[],
+  pluginRoot: string,
+  paths: Pick<ReceiverPaths, 'out' | 'portFile'>,
+): string[] => [...python, scriptOf(pluginRoot), 'clean', paths.out, paths.portFile]
 
 /**
- * 受信サーバを切り離して起動する argv。`nohup ... &` で背景に回し、`echo started`
- * ですぐ戻ります (plan.md 4 章 V2)。
+ * 受信サーバを切り離して起動する argv。receiver.py の `start` が `serve` を背景に回し、
+ * `started` を出してすぐ戻ります。
  *
+ * @param python Python 3 を起動する argv (`PYTHON_CANDIDATES` のどれか)
  * @param paths ファイルの置き場
  * @param token `?t=` で照合するトークン
  * @returns `$.process.run` に渡す argv
  */
-export function receiverArgv(paths: ReceiverPaths, token: string): string[] {
-  const script = `${paths.pluginRoot}/scripts/receiver.py`
-  const command =
-    `nohup python3 ${shellQuoted(script)}` +
-    ` --port-file ${shellQuoted(paths.portFile)}` +
-    ` --token ${shellQuoted(token)}` +
-    ` --html ${shellQuoted(paths.html)}` +
-    ` --out ${shellQuoted(paths.out)}` +
-    ' >/dev/null 2>&1 & echo started'
-  return ['sh', '-c', command]
+export function receiverArgv(python: readonly string[], paths: ReceiverPaths, token: string): string[] {
+  return [
+    ...python,
+    scriptOf(paths.pluginRoot),
+    'start',
+    '--port-file',
+    paths.portFile,
+    '--token',
+    token,
+    '--html',
+    paths.html,
+    '--out',
+    paths.out,
+  ]
 }
 
 /**
@@ -106,18 +125,22 @@ export const waitUrlOf = (port: number, token: string, timeoutSeconds: number): 
   `http://127.0.0.1:${port}/wait?t=${encodeURIComponent(token)}&timeout=${timeoutSeconds}`
 
 /**
- * ブラウザを開く argv。macOS は `open`、それ以外は `xdg-open`。
+ * ブラウザを開く argv。receiver.py の `open` が OS ごとの方法 (macOS は open、
+ * Windows は関連付け、それ以外は xdg-open) で開きます。
  */
-export function openBrowserArgv(url: string): string[] {
-  return [
-    'sh',
-    '-c',
-    'if [ "$(uname)" = Darwin ]; then open "$0"; else xdg-open "$0"; fi',
-    url,
-  ]
-}
+export const openBrowserArgv = (python: readonly string[], pluginRoot: string, url: string): string[] => [
+  ...python,
+  scriptOf(pluginRoot),
+  'open',
+  url,
+]
 
 /**
- * 受信サーバを止める argv。
+ * 受信サーバを止める argv。receiver.py の `stop` が止めます (もう無ければ何もしません)。
  */
-export const killArgv = (pid: number): string[] => ['kill', String(pid)]
+export const stopArgv = (python: readonly string[], pluginRoot: string, pid: number): string[] => [
+  ...python,
+  scriptOf(pluginRoot),
+  'stop',
+  String(pid),
+]
