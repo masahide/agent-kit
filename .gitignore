@@ -2,7 +2,7 @@
 .claude/types/
 
 # Mod を手元で動かしたときの証跡 (質問票、HTML、回答)
-/interview/
+/doc-desk/
 
 # macOS の Finder が作るファイル
 .DS_Store
