@@ -1,0 +1,53 @@
+{
+  "startedAt": 1790075671284,
+  "surface": null,
+  "isInteractive": false,
+  "pluginRoot": "/Users/cf0681/masahide/git/agent-kit/spikes/mods-spike",
+  "init": true,
+  "toolRegister": {
+    "tool": "mcp__spike__wait"
+  },
+  "v2_detached": {
+    "ok": true,
+    "exitCode": 0,
+    "stdout": "started",
+    "elapsedMs": 40
+  },
+  "v4_receiver_start": {
+    "exitCode": 0,
+    "stdout": "started",
+    "elapsedMs": 30
+  },
+  "v4_get_form": {
+    "status": 200,
+    "ok": true,
+    "length": 921
+  },
+  "v4_post": {
+    "status": 200,
+    "ok": true,
+    "text": "{\"ok\":true}"
+  },
+  "v4_answer_file": {
+    "found": true,
+    "body": "{\"answers\":{\"q1\":\"A\"},\"note\":\"posted by the mod through $.http.fetch\"}",
+    "elapsedMs": 1537
+  },
+  "v1_timer_long_run": {
+    "ok": true,
+    "exitCode": 0,
+    "elapsedMs": 15023
+  },
+  "v3_tool_sync_wait": {
+    "ok": true,
+    "exitCode": 0,
+    "elapsedMs": 20021
+  },
+  "v5_prompt_submit": {
+    "text": "【スパイク回答】answer.json を受け取りました。これは plugin が $.prompt.submit で投入した user turn です。「受信確認」とだけ返答してください。",
+    "origin": {
+      "kind": "plugin",
+      "name": "spike"
+    }
+  }
+}

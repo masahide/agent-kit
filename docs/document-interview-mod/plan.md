@@ -148,6 +148,8 @@ sequenceDiagram
 
 ## 5. 設計
 
+注記 (2026-09-22): MVP は本章の「ペインで答える」設計ではなく、ブラウザの HTML フォームで答えて受信サーバに POST で戻す経路で実装します。利用者がスパイク V2, V4〜V6 の結果を見て選びました。実装仕様は [mvp-design.md](mvp-design.md) にあり、食い違う箇所は mvp-design.md が優先します。本章の 5.2 節 (スキーマ) と 5.5 節 (回答固定形) はそのまま使います。
+
 ### 5.1 ファイル構成
 
 `plugins/document-interview/` に置きます。plugin の形は Anthropic の `mods/diff` に倣います。
@@ -265,7 +267,7 @@ terminal のペインを基準にします。desktop と vscode も同じ要素�
 | 画面の要素 | 使う要素 | 補足 |
 |---|---|---|
 | 結論、用語、根拠、利点と代償 | `Text`、`Markdown` | 折り返しは `wrap="wrap"`。長い引用は `Code` に入れます |
-| 選択肢 | `Select` (値 = 選択肢 ID) | 未選択の状態を表す値 `""` を先頭に置きます。desktop では `Button` の並びも検討します (未決 Q2) |
+| 選択肢 | `Select` (値 = 選択肢 ID) | 未選択の状態を表す値 `""` を先頭に置きます。desktop でも同じ `Select` を使います (決定 Q2) |
 | 補足、表のセル、全体コメント | `Input` | 1 行のみです。長文は「チャットで補足」を案内します |
 | 選択を解除、下書きを消す、送信 | `Button` | 送信には `hotkey: "s"` を付けます。送信前に未回答数を表示します |
 | テーマ切替 | `Select` | テーマが 1 つなら描きません |
@@ -278,7 +280,7 @@ terminal のペインを基準にします。desktop と vscode も同じ要素�
 | イベント | フックがすること |
 |---|---|
 | `session.start` | `$` を束ねて host を作り、`$.tool.register({ name: "open_form" })` と `$.command.register({ name: "interview" })` を行います。サーフェスが mobile だけなら登録しません |
-| `tool.call` (tool: `mcp__document-interview__open_form`) | 入力を検証し、質問票を状態に置き、`$.ui.open({ id: "interview", title, focus: true })` を呼び、`{ result: { status: "opened", documentId }, context: ["回答が届くまで文書を書かないでください"] }` を返します。検証エラーは `{ result: { status: "invalid", errors } }` で Claude に返します |
+| `tool.call` (tool: `mcp__document-interview__open_form`) | 入力を検証し、質問票を状態に置き、`$.ui.open({ id: "interview", title, focus: true })` を呼び、`{ result: JSON.stringify({ status: "opened", documentId }), context: ["回答が届くまで文書を書かないでください"] }` を返します。検証エラーは `{ result: JSON.stringify({ status: "invalid", errors }) }` で Claude に返します。plugin ツールの結果は文字列か content ブロックの配列に限られます (11 章 V3) |
 | `ui.render` (component: `Pane`, requestId: `interview`) | `$.ui.resolve(e)` で要素表を受け取り、5.3 節の画面を描きます。`e.props.bodyColumns` で幅を決めます |
 | `ui.select`, `ui.input`, `ui.press` | 要素の `onSelect`, `onInput`, `onPress` が Mod 内で走ります。状態を更新し `$.ui.invalidate("ui.render")` で再描画します。下書きは `$.store.set` に書きます |
 | [送信] の `onPress` | 回答固定形を作り、`$.fs.write` で証跡を保存し、`$.prompt.submit({ text })` を呼び、`$.ui.close({ id: "interview" })` でペインを閉じます |
@@ -366,7 +368,7 @@ Claude 側の手順は SKILL.md に書きます。Mod は描画と回収だけ�
 
 | 項目 | 値 | 影響 |
 |---|---|---|
-| フックの時間予算 | 1 ディスパッチ 10 秒。`$` 呼び出し中は止まるが `$.clock` の待ちは予算に入る | ツールの中で人の回答を待てません。開いてすぐ返し、回答は `$.prompt.submit` で戻します |
+| フックの時間予算 | 1 ディスパッチ 10 秒。`$` 呼び出し中は止まるが `$.clock` の待ちは予算に入る | `$.process.run` で待つ分は数えられません (11 章 V1, V3 で実測)。`$.clock.sleep` で待つ設計は避けます |
 | 描画ツリーの上限 | 20,000 ノード、深さ 32、直列化 100,000 文字 | 質問は 5 問まで、表は 20 行 × 6 列までに制限します |
 | `$.store` の上限 | 4 MiB | 下書きだけを置きます |
 | `Input` | 1 行のみ | 長文の補足は「チャットで補足」に誘導します |
@@ -412,25 +414,47 @@ M1 から M3 までが MVP です。
 | 送信が 2 回押される | 送信後はボタンを無効にし、`documentId` と `revision` で二重投入を無視します |
 | コミュニティ記事の誤情報 | 根拠は付録 A の一次情報に限定します |
 
-## 10. 決めてほしいこと
+## 10. 決定事項
 
-akapen の流儀で、決定だけを挙げます。未選択は推奨で進めます。
+2026-09-22 に、akapen の流儀で挙げた 4 問すべてについて推奨案を採用しました。
 
-**Q1. 置き場所はどこにしますか**
-- A. `plugins/document-interview/` (このリポジトリ内) 【推奨】 利点: vendor の元ネタと並べて差分を追えます。代償: 使うときに `--plugin-dir` の指定が要ります。
-- B. `~/.claude/skills/document-interview/` (`claude plugin init` の既定) 利点: 次回起動から自動で読まれます。代償: リポジトリの外に出て版管理が分かれます。
+| 問い | 決定 | 理由 |
+|---|---|---|
+| Q1. 置き場所 | A. `plugins/document-interview/` (このリポジトリ内) | vendor の元ネタと並べて差分を追えます。使うときは `--plugin-dir` で指定します |
+| Q2. 選択肢の部品 | A. `Select` 1 つ (値 = 選択肢 ID) | 全サーフェスで同じ挙動で、行数が少なくて済みます。利点と代償の文は Select の外に描きます |
+| Q3. 回答の見せ方 | A. 回答固定形の全文を user turn の本文にし、JSON を隠し context に添える | トランスクリプトに何を答えたかが残ります |
+| Q4. レビューモード (F-13) の範囲 | A. 最初の範囲に含めず、M6 で扱う | MVP を小さく早く動かします。生成文書への指摘は当面チャットで受けます |
 
-**Q2. 選択肢の部品は何にしますか**
-- A. `Select` 1 つ (値 = 選択肢 ID) 【推奨】 利点: 全サーフェスで同じ挙動で、行数が少なくて済みます。代償: 利点と代償の文は Select の外に別途描く必要があります。
-- B. 選択肢ごとの `Button` (押した項目を反転表示) 利点: 一覧性が高く、grilling-viz の縦並びに近くなります。代償: 行数が増え、選択状態の描き分けを自前で持ちます。
+採用しなかった案は次のとおりです。Q1 は `~/.claude/skills/` への配置、Q2 は選択肢ごとの `Button`、Q3 は本文 1 行と隠し context だけ、Q4 は最初から含める案でした。
 
-**Q3. 回答を Claude にどう見せますか**
-- A. 回答固定形の全文を user turn の本文にし、JSON を隠し context に添える 【推奨】 利点: トランスクリプトに何を答えたかが残ります。代償: 長い表は本文が長くなります。
-- B. 本文は「回答を送信しました」の 1 行にし、内容は隠し context だけに載せる 利点: 画面が短く済みます。代償: 人が後から答えを確認できません。
+## 11. 検証結果 (スパイク、2026-09-22)
 
-**Q4. レビューモード (F-13) を最初の範囲に含めますか**
-- A. 含めない。M6 で扱う 【推奨】 利点: MVP が小さく早く動きます。代償: 生成文書への指摘は当面チャットで受けます。
-- B. 含める 利点: 往復が最初から閉じます。代償: M3 の後に描画部品が倍になります。
+`spikes/mods-spike/` と `spikes/mods-spike-v3/` の plugin を、Claude Code 2.1.278 に `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` を付けた非対話モード (`claude -p --plugin-dir`) で実行しました。数値はそのときの実測です。
+
+| 番号 | 検証したこと | 結果 | 実測 |
+|---|---|---|---|
+| V1 | タイマーの中で 15 秒の `$.process.run` を待つ | 完走した。フック予算 10 秒に数えられない | 15,023 ms |
+| V2 | `sh -c "nohup ... >/dev/null 2>&1 &"` で切り離した子を起動する | すぐ戻った。受信サーバの常駐起動に使える | 40 ms |
+| V3 | `tool.call` の中で 20 秒待ってから結果を返す (同期型) | 待てた。ただし結果の形が文字列か content ブロック配列でないとモデルにエラーが届く | 20,021 ms |
+| V4 | 受信サーバを起動し、フォームを GET、回答を POST、回答ファイルを検知する | 全段階が通った | 起動から検知まで 1,537 ms |
+| V5 | 回答検知後に `$.prompt.submit` で user turn を投入する | 投入され、モデルが「受信確認」と応答した。origin は `{ kind: "plugin", name }` | 2 ターン目 1,392 ms |
+| V6 | 実ブラウザ (Claude デスクトップアプリ内蔵の Chromium) でフォームを開き [送信] を押す | 同一オリジンの `fetch` POST が 200 で返り、回答ファイルが書かれ、受信サーバが自動終了した | 回答は `{"answers":{"q1":"B"},"note":"..."}` |
+| V7 | MVP 実装 (plugins/document-interview) を `claude -p` で通しで実行: open_form → 受信サーバ → 内蔵ブラウザで送信 → 回答検知 → `$.prompt.submit` | 全段階が通り、2 ターン目に `【インタビュー回答】` の固定形がそのまま届いた。ただし plugin 自身の `prompt.submit` フックは自分の投入を見ないため、隠し context は付かない (`config.set` の origin plugin の説明「その plugin 自身のフックは見ない」と同じ扱い) | 回答検知から 2 ターン目まで約 8 秒 (待機ループの粒度 2 秒を含む) |
+
+V3 の補足: `{ result: JSON.stringify(...) }` と `{ result: [{ type: "text", text }] }` はモデルに届き、`{ result: { content: [...] } }` は「出力の形に合わない」と拒否されます。
+
+実装上の規則も 2 つ分かりました。
+
+- `$` を変数に代入したり引数に渡したりすると `claude plugin validate` が拒否します。`$.fs.write(...)` のように呼び出し位置で必ず `$.名詞.イベント(...)` と書き、後で使う場合は `session.start` の中で `text => $.fs.write(path, text)` のような閉包を作ります。
+- `claude plugin validate` はフックの一覧と `$` の呼び出し一覧を印字します。README の「What it hooks / What it calls on `$`」はこの出力と一致させます。
+
+V6 の補足: Chrome 拡張 (Claude in Chrome) は接続できなかったため、内蔵ブラウザで代替しました。ブラウザ側の表示は「送信しました。ターミナルに戻ってください。」で、ネットワークログにも `POST /answer?t=test → 200 OK` が残りました。既定のブラウザで開く場合も同一オリジンの `fetch` なので動作は同じと見ています。
+
+V7 の補足: 決定 Q3 の「JSON を隠し context に添える」は成立しないので、回答 JSON は `interview/<label>.answer.json` を Claude が読む形に変えました。`$.fs.write` は親ディレクトリ `interview/` を作りました (mkdir は不要)。
+
+未検証のまま残るのは、対話モードでのペインの描画とフォーカス移動、[取り消す] ボタンの押下です (テストキットの `$.ui.mount` と `$.ui.press` では通っています)。
+
+受信サーバのプロトタイプは `spikes/mods-spike/scripts/receiver.py` と `form.html` にあります。トークン無しの GET は 403、POST 1 件でファイルに書いて自動終了します。
 
 ## 付録 A. 根拠にした一次情報
 
