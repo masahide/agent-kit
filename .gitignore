@@ -12,3 +12,4 @@
 /spikes/*/latest
 /spikes/*/run-output.json
 /spikes/*/run-stderr.txt
+/spikes/mods-spike/results.json
