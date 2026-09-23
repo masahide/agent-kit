@@ -1,6 +1,6 @@
 # doc-desk
 
-使い方 (読み込み方、フォームの答え方、困ったとき) は [利用者ガイド](../../docs/doc-desk/usage.md) にあります。
+使い方 (読み込み方、フォームの使い方、困ったとき) は [利用者ガイド](../../docs/doc-desk/usage.md) にあります。
 
 doc-desk Mod (MVP)。Claude が文書を書く前に、文書の構成案と決定してほしい論点を
 質問票 JSON としてツール `open_form` に渡すと、この Mod が自己完結の HTML シートを

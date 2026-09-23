@@ -62,7 +62,7 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 
 ## Mod が読み込まれていないとき
 
-使えるツールの一覧に `mcp__doc-desk__open_form` (指摘モードでは `mcp__doc-desk__open_review`) が無ければ、Mod が読み込まれていません。質問票を出さずに止まり、人に「doc-desk Mod が読み込まれていません」と伝えて、利用者ガイド (agent-kit の `docs/doc-desk/usage.md`) の 4 章「Mod を読み込む」を案内します。
+使えるツールの一覧に `mcp__doc-desk__open_form` (指摘モードでは `mcp__doc-desk__open_review`) が無ければ、Mod が読み込まれていません。質問票を出さずに止まり、人に「doc-desk Mod が読み込まれていません」と伝えて、利用者ガイド (agent-kit の `docs/doc-desk/usage.md`) の 3 章「Mod を読み込む」を案内します。
 
 ## 証跡ファイル
 
