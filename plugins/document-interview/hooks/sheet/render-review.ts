@@ -70,6 +70,13 @@ const REVIEW_STYLE = `
 .editor textarea{min-height:96px}
 .editor-row{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:8px;font-size:13px}
 .editor-row input{width:84px;padding:6px 8px;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.doc-body mark{color:inherit;border-radius:3px;padding:1px 0;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+.doc-body mark.sel{background:#FFE08A;box-shadow:0 0 0 2px #F2A20C}
+.doc-body mark.q{background:var(--blue-soft);border-bottom:2px solid var(--blue)}
+.doc-body mark.q.keep{background:var(--green-soft);border-bottom-color:var(--green)}
+.doc-body mark.q[data-no]::after{content:attr(data-no);display:inline-grid;place-items:center;min-width:15px;height:15px;margin-left:2px;padding:0 4px;border-radius:999px;background:var(--blue);color:var(--on-strong);font:700 10px/1 var(--mono);vertical-align:2px}
+.doc-body mark.q.keep[data-no]::after{background:var(--green)}
+@media (prefers-color-scheme:dark){.doc-body mark.sel{background:rgba(244,183,64,.35);box-shadow:0 0 0 2px var(--amber)}}
 .modes{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .mode{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;line-height:1.5;color:var(--muted);cursor:pointer}
 .mode:has(input:checked){border-color:var(--blue);background:var(--blue-soft)}
@@ -439,9 +446,60 @@ const SCRIPT = `
     listNode.appendChild(ol);
   }
 
+  // 文字位置: 段落の中の何文字目か。指摘の番号の印 (.mk) と添削の印 (.etag) の文字は数えない
+  function isDecoration(node) {
+    var el = node.nodeType === 1 ? node : node.parentNode;
+    return !!(el && el.closest && el.closest('.mk, .etag'));
+  }
+
+  function charOffset(blockEl, container, offset) {
+    var range = document.createRange();
+    range.setStart(blockEl, 0);
+    range.setEnd(container, offset);
+    var holder = document.createElement('div');
+    holder.appendChild(range.cloneContents());
+    Array.prototype.forEach.call(holder.querySelectorAll('.mk, .etag'), function (el) { el.parentNode.removeChild(el); });
+    return holder.textContent.length;
+  }
+
+  // 段落の start〜end 文字目を mark で囲む。文字の節をまたぐときは節ごとに囲む
+  function highlight(blockEl, start, end, className, no) {
+    if (!(end > start)) return;
+    var walker = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
+    var nodes = [];
+    while (walker.nextNode()) if (!isDecoration(walker.currentNode)) nodes.push(walker.currentNode);
+    var position = 0;
+    var marks = [];
+    nodes.forEach(function (node) {
+      var length = node.nodeValue.length;
+      var from = Math.max(start, position);
+      var to = Math.min(end, position + length);
+      position += length;
+      if (to <= from) return;
+      var target = node;
+      if (from - (position - length) > 0) target = target.splitText(from - (position - length));
+      if (to - from < target.nodeValue.length) target.splitText(to - from);
+      var mark = document.createElement('mark');
+      mark.className = className;
+      target.parentNode.insertBefore(mark, target);
+      mark.appendChild(target);
+      marks.push(mark);
+    });
+    if (no && marks.length > 0) marks[marks.length - 1].setAttribute('data-no', String(no));
+  }
+
   // 指摘の印、一覧、数を描き直す
   function render() {
     applyEdits();
+    sorted().forEach(function (entry) {
+      var block = blocks[entry.comment.block - 1];
+      if (!block || !entry.comment.range || block.el.classList.contains('edited')) return;
+      highlight(block.el, entry.comment.range[0], entry.comment.range[1], 'q' + (isKeep(entry.comment) ? ' keep' : ''), entry.no);
+    });
+    if (current && current.range) {
+      var selected = blocks[current.block - 1];
+      if (selected) highlight(selected.el, current.range[0], current.range[1], 'sel', 0);
+    }
     all('.mk', docEl).forEach(function (el) { el.parentNode.removeChild(el); });
     blocks.forEach(function (block) { block.el.classList.remove('has', 'keep'); });
     var byBlock = Object.create(null);
@@ -501,10 +559,10 @@ const SCRIPT = `
     inspectorEl.scrollTop = 0;
   }
 
-  function selectBlock(n, quote) {
+  function selectBlock(n, quote, range) {
     var block = blocks[n - 1];
     if (!block) return;
-    current = { block: n, quote: quote };
+    current = { block: n, quote: quote, range: quote && range ? range : null };
     overviewEl.hidden = true;
     blockPanelEl.hidden = false;
     blocks.forEach(function (b, index) { b.el.classList.toggle('active', index === n - 1); });
@@ -626,8 +684,9 @@ const SCRIPT = `
     if (!current) return;
     var text = textEl.value.trim();
     if (!chip && !text) return;
-    comments.push({ block: current.block, chip: chip, quote: current.quote || '', text: text });
+    comments.push({ block: current.block, chip: chip, quote: current.quote || '', text: text, range: current.quote ? current.range : null });
     current.quote = '';
+    current.range = null;
     quoteBoxEl.hidden = true;
     textEl.value = '';
     setChip(null);
@@ -636,22 +695,37 @@ const SCRIPT = `
     setStatus(HINT, '');
   }
 
-  // 左: 段落を押すと、その段落の指摘の操作を出す。1 つの段落の中で文字列を選んでいれば、その文字列に付ける
-  canvasEl.addEventListener('click', function (event) {
+  // 左: 1 つの段落の中で文字列を選んでマウスを離すと、その文字列に色を付けて、右に指摘の操作を出す。
+  // 選んだ位置は段落の中の文字位置で覚え、描き直しても色を付け直す (ブラウザの選択は描き直しで消えるため)
+  function takeSelection() {
     var selection = window.getSelection ? window.getSelection() : null;
-    if (selection && !selection.isCollapsed && docEl.contains(selection.anchorNode)) {
-      var start = blockOf(selection.anchorNode);
-      var end = blockOf(selection.focusNode);
-      var quote = selection.toString().replace(/\\s+/g, ' ').trim();
-      if (start !== null && start === end && quote) {
-        selectBlock(start, quote.length > MAX_QUOTE ? quote.slice(0, MAX_QUOTE) + '…' : quote);
-        return;
-      }
-      if (start !== null && start !== end) {
-        setStatus('文字列は 1 つの段落の中で選んでください。', 'err');
-        return;
-      }
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !docEl.contains(selection.anchorNode)) return false;
+    var start = blockOf(selection.anchorNode);
+    var end = blockOf(selection.focusNode);
+    var quote = selection.toString().replace(/\\s+/g, ' ').trim();
+    if (start === null || !quote) return false;
+    if (start !== end) {
+      setStatus('文字列は 1 つの段落の中で選んでください。', 'err');
+      selection.removeAllRanges();
+      return true;
     }
+    var block = blocks[start - 1];
+    var range = selection.getRangeAt(0);
+    var from = charOffset(block.el, range.startContainer, range.startOffset);
+    var to = charOffset(block.el, range.endContainer, range.endOffset);
+    selection.removeAllRanges();
+    selectBlock(start, quote.length > MAX_QUOTE ? quote.slice(0, MAX_QUOTE) + '…' : quote, [Math.min(from, to), Math.max(from, to)]);
+    setStatus('選んだ文字列に色を付けました。右でチップかコメントを入れて [指摘を足す] を押します。', '');
+    return true;
+  }
+
+  // 文書の中で離せば直後の click が選択を読む。文書の外 (右の欄など) で離したときは click が来ないので、ここで読む
+  document.addEventListener('mouseup', function () {
+    setTimeout(takeSelection, 0);
+  });
+
+  canvasEl.addEventListener('click', function (event) {
+    if (takeSelection()) return;
     var n = blockOf(event.target);
     if (n === null) {
       showOverview();
@@ -684,8 +758,12 @@ const SCRIPT = `
   addEl.addEventListener('click', addComment);
   all('[data-action="clear-quote"]').forEach(function (button) {
     button.addEventListener('click', function () {
-      if (current) current.quote = '';
+      if (current) {
+        current.quote = '';
+        current.range = null;
+      }
       quoteBoxEl.hidden = true;
+      render();
     });
   });
   overviewButton.addEventListener('click', showOverview);
@@ -716,7 +794,9 @@ const SCRIPT = `
       documentId: review.documentId,
       revision: review.revision,
       comments: comments.map(function (comment) {
-        return { block: comment.block, chip: comment.chip, quote: comment.quote, text: comment.text };
+        var item = { block: comment.block, chip: comment.chip, quote: comment.quote, text: comment.text };
+        if (comment.range) item.range = comment.range;
+        return item;
       }),
       edits: edits.map(function (edit) {
         if (edit.kind === 'delete') return { kind: 'delete', block: edit.block };
@@ -745,7 +825,9 @@ const SCRIPT = `
         block: comment.block,
         chip: typeof comment.chip === 'string' ? comment.chip : null,
         quote: typeof comment.quote === 'string' ? comment.quote : '',
-        text: typeof comment.text === 'string' ? comment.text : ''
+        text: typeof comment.text === 'string' ? comment.text : '',
+        range: Array.isArray(comment.range) && comment.range.length === 2 &&
+          typeof comment.range[0] === 'number' && typeof comment.range[1] === 'number' ? comment.range : null
       });
     });
     (Array.isArray(saved.edits) ? saved.edits : []).forEach(function (edit) {
