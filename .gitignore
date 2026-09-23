@@ -1,0 +1,8 @@
+# /plugin-types が生成する型定義 (Claude Code のバージョンごとに再生成する)
+.claude/types/
+
+# Mod を手元で動かしたときの証跡 (質問票、HTML、回答)
+/interview/
+
+# macOS の Finder が作るファイル
+.DS_Store
