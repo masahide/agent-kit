@@ -48,8 +48,8 @@ export const STRINGS = {
     '"invalid": errors を直して再送してください。"failed": reason の代替導線を人に案内してください。',
   /** コマンドの説明 */
   commandDescription: '待機中のインタビューのペインとブラウザを開き直す',
-  /** python3 が無いときの理由 */
-  noPython: 'python3 が見つからないため受信サーバを起動できませんでした',
+  /** Python 3 が無いときの理由 */
+  noPython: 'Python 3 (python3、python、py -3 のどれか) が見つからないため受信サーバを起動できませんでした',
   /** 受信サーバが port-file を書かなかったときの理由 */
   noPortFile: '受信サーバが 3 秒以内に起動しませんでした',
   /** 代替導線 */

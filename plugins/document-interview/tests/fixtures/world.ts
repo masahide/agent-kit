@@ -62,25 +62,44 @@ export type WaitCall = {
  */
 export type WaitReply = { answered: boolean } | 'error'
 
+/**
+ * `--version` に Python 3 と答えるコマンド。null はどれも答えない (Python が無い)。
+ * `python3` 以外を選ぶと、`python3` は Windows の Microsoft Store の案内 (スタブ) を模して失敗する。
+ */
+export type PythonCommand = 'python3' | 'python' | 'py' | null
+
 export type WorldOptions = {
   /** false なら受信サーバが port-file を書かない (起動失敗を模す) */
   isReceiverUp?: boolean
-  /** false なら `python3 --version` が失敗する */
-  hasPython?: boolean
+  /** `--version` に Python 3 と答えるコマンド。省略時は `python3` */
+  python?: PythonCommand
   /** `GET /wait` の答え。省略時は毎回 `{ answered: false }` (timeout まで回答が無かった) */
   waitReply?: (call: WaitCall) => WaitReply | Promise<WaitReply>
+}
+
+/**
+ * ファイルの Map のキー。Windows のエンジンは `$.fs` のパスを `C:\work\interview\x.json` の形に
+ * 直して渡すので、区切りを `/` にしてドライブ名を外し、`/work/interview/x.json` にそろえます。
+ */
+export const keyOf = (path: string): string => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '')
+
+/**
+ * argv が receiver.py のどのサブコマンドを呼んでいるか。receiver.py でなければ null。
+ */
+export function receiverCommandOf(argv: readonly string[]): string | null {
+  const index = argv.findIndex(arg => arg.endsWith('receiver.py'))
+  return index < 0 ? null : (argv[index + 1] ?? null)
 }
 
 /**
  * Mod の下の世界を記憶で答えます: ファイルは Map、プロセスは台本、時計は mock.clock、
  * 受信サーバの `/wait` は `options.waitReply`。
  *
- * 受信サーバの起動 (argv に receiver.py を含む `process.run`) を受けると、
- * コマンド文字列から `--port-file` のパスを読み取り、port-file を Map に置きます。
- * `rm -f <paths...>` は Map から消します。
+ * receiver.py の `start` を受けると、argv の `--port-file` のパスに port-file を置きます。
+ * `clean <paths...>` は Map から消します。`open` と `stop` は記録するだけです。
  *
  * @param on テストの `on`
- * @param options 受信サーバと python3 の有無、/wait の答え
+ * @param options 受信サーバと Python の有無、/wait の答え
  * @returns 記録と時計
  */
 export function world(on: On, options: WorldOptions = {}) {
@@ -111,40 +130,47 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   on('fs.write', ($, e) => {
-    files.set(e.path, e.text)
+    files.set(keyOf(e.path), e.text)
     return { value: undefined }
   })
 
   on('fs.read', ($, e) => {
-    const text = files.get(e.path)
+    const text = files.get(keyOf(e.path))
     return text === undefined ? { deny: `ENOENT: ${e.path}` } : { value: text }
   })
 
-  on('fs.exists', ($, e) => ({ value: files.has(e.path) }))
+  on('fs.exists', ($, e) => ({ value: files.has(keyOf(e.path)) }))
 
   on('process.run', ($, e) => {
     runs.push(e.argv)
-    const command = e.argv.join(' ')
+    const python = options.python === undefined ? 'python3' : options.python
 
-    if (e.argv[0] === 'python3') {
-      return options.hasPython === false
-        ? { value: { exitCode: 127, stdout: '', stderr: 'python3: not found' } }
-        : { value: { exitCode: 0, stdout: 'Python 3.14.2\n', stderr: '' } }
+    if (e.argv.includes('--version')) {
+      if (e.argv[0] === python) {
+        return { value: { exitCode: 0, stdout: 'Python 3.14.2\n', stderr: '' } }
+      }
+      if (e.argv[0] === 'python3' && python !== null) {
+        // Windows の python3 スタブ: Python は入っているが、Microsoft Store の案内だけを出す
+        return {
+          value: { exitCode: 9009, stdout: '', stderr: 'Python was not found; run without arguments to install from the Microsoft Store' },
+        }
+      }
+      return { value: { exitCode: 127, stdout: '', stderr: `${e.argv[0]}: not found` } }
     }
 
-    if (e.argv[0] === 'rm') {
-      for (const path of e.argv.slice(1)) {
-        if (!path.startsWith('-')) {
-          files.delete(path)
-        }
+    const command = receiverCommandOf(e.argv)
+    if (command === 'clean') {
+      const index = e.argv.indexOf('clean')
+      for (const path of e.argv.slice(index + 1)) {
+        files.delete(keyOf(path))
       }
       return { value: { exitCode: 0, stdout: '', stderr: '' } }
     }
 
-    if (command.includes('receiver.py')) {
-      const match = /--port-file '([^']+)'/.exec(command)
-      if (match?.[1] !== undefined && options.isReceiverUp !== false) {
-        files.set(match[1], JSON.stringify({ port: RECEIVER_PORT, pid: RECEIVER_PID }))
+    if (command === 'start') {
+      const portFile = e.argv[e.argv.indexOf('--port-file') + 1]
+      if (portFile !== undefined && options.isReceiverUp !== false) {
+        files.set(keyOf(portFile), JSON.stringify({ port: RECEIVER_PORT, pid: RECEIVER_PID }))
       }
       return { value: { exitCode: 0, stdout: 'started\n', stderr: '' } }
     }
@@ -206,7 +232,9 @@ export function world(on: On, options: WorldOptions = {}) {
     registeredCommands,
     clock,
     invalidations: () => invalidations,
-    /** 受信サーバの起動 (receiver.py を含む run) だけ */
-    receiverRuns: () => runs.filter(argv => argv.join(' ').includes('receiver.py')),
+    /** 受信サーバの起動 (receiver.py の start) だけ */
+    receiverRuns: () => runs.filter(argv => receiverCommandOf(argv) === 'start'),
+    /** receiver.py の指定のサブコマンド (clean、open、stop) の run だけ */
+    receiverCommandRuns: (command: string) => runs.filter(argv => receiverCommandOf(argv) === command),
   }
 }

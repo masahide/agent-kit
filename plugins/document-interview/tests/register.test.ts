@@ -53,27 +53,33 @@ describe('register', () => {
 
     const receiverRuns = world.receiverRuns()
     expect(receiverRuns).toHaveLength(1)
-    const command = receiverRuns[0]?.join(' ') ?? ''
-    expect(command).toContain('receiver.py')
-    expect(command).toContain('--token')
-    expect(command).toContain("--html '/work/interview/spec-auth-01.html'")
-    expect(command).toContain("--out '/work/interview/spec-auth-01.answer.json'")
-    expect(command).toContain('nohup')
-    expect(
-      world.runs.findIndex(argv => argv[0] === 'rm'),
-      '前回の回答と port-file を消す rm は受信サーバの起動より前',
-    ).toBeLessThan(world.runs.findIndex(argv => argv.join(' ').includes('receiver.py')))
-    expect(world.runs.find(argv => argv[0] === 'rm')).toEqual([
-      'rm',
-      '-f',
+    const argv = receiverRuns[0] ?? []
+    expect(argv[0], 'シェルを通さず python3 で receiver.py の start を呼ぶ').toBe('python3')
+    expect(argv[1]).toMatch(/[\\/]scripts\/receiver\.py$/)
+    expect(argv.slice(2, 4)).toEqual(['start', '--port-file'])
+    expect(argv).toContain('--token')
+    expect(argv.slice(argv.indexOf('--html'), argv.indexOf('--html') + 2)).toEqual([
+      '--html',
+      '/work/interview/spec-auth-01.html',
+    ])
+    expect(argv.slice(argv.indexOf('--out'), argv.indexOf('--out') + 2)).toEqual([
+      '--out',
       '/work/interview/spec-auth-01.answer.json',
-      '/work/interview/spec-auth-01.port.json',
+    ])
+    expect(
+      world.runs.some(run => run[0] === 'sh'),
+      'sh は使わない (Windows には無い)',
+    ).toBe(false)
+    const cleanRuns = world.receiverCommandRuns('clean')
+    expect(
+      world.runs.indexOf(cleanRuns[0] ?? []),
+      '前回の回答と port-file を消す clean は受信サーバの起動より前',
+    ).toBeLessThan(world.runs.indexOf(argv))
+    expect(cleanRuns.map(run => run.slice(2))).toEqual([
+      ['clean', '/work/interview/spec-auth-01.answer.json', '/work/interview/spec-auth-01.port.json'],
     ])
 
-    expect(
-      world.runs.some(argv => argv.join(' ').includes('open ')),
-      'openBrowser: false ではブラウザを開かない',
-    ).toBe(false)
+    expect(world.receiverCommandRuns('open'), 'openBrowser: false ではブラウザを開かない').toEqual([])
 
     expect(world.opened.map(pane => pane.id), 'ペインが開く').toEqual([PANE_ID])
   })
@@ -200,7 +206,7 @@ describe('register', () => {
     await world.clock.settle()
     await ui.unmount()
 
-    expect(world.runs.some(argv => argv[0] === 'kill' && argv[1] === String(Fixtures.RECEIVER_PID))).toBe(true)
+    expect(world.receiverCommandRuns('stop').map(run => run.slice(2))).toEqual([['stop', String(Fixtures.RECEIVER_PID)]])
     expect(world.closed.map(pane => pane.id)).toEqual([PANE_ID])
     expect(world.logged.at(-1)).toBe(STRINGS.cancelled)
 
@@ -219,7 +225,7 @@ describe('register', () => {
     await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM_NO_TABLES, openBrowser: false, waitSeconds: 0 })
     await world.clock.settle()
 
-    expect(world.runs.filter(argv => argv[0] === 'kill')).toEqual([['kill', String(Fixtures.RECEIVER_PID)]])
+    expect(world.receiverCommandRuns('stop').map(run => run.slice(2))).toEqual([['stop', String(Fixtures.RECEIVER_PID)]])
     expect(world.receiverRuns()).toHaveLength(2)
 
     world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
@@ -382,7 +388,7 @@ describe('register', () => {
     expect(result.reason).toBe(STRINGS.cancelledByPerson)
     expect(answered.context).toBeUndefined()
     expect(world.fetched).toHaveLength(1)
-    expect(world.runs.some(argv => argv[0] === 'kill')).toBe(true)
+    expect(world.receiverCommandRuns('stop')).toHaveLength(1)
     expect(world.logged.at(-1)).toBe(STRINGS.cancelled)
 
     world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
@@ -431,8 +437,8 @@ describe('register', () => {
     expect(world.opened).toEqual([])
   })
 
-  test('python3 が無ければ受信サーバを起動せず failed を返す', async ($, on) => {
-    const world = Fixtures.world(on, { hasPython: false })
+  test('Python 3 がどの名前でも見つからなければ受信サーバを起動せず failed を返す', async ($, on) => {
+    const world = Fixtures.world(on, { python: null })
 
     await $.session.start(Fixtures.SESSION)
 
@@ -442,5 +448,24 @@ describe('register', () => {
     expect(result.status).toBe('failed')
     expect(result.reason).toContain(STRINGS.noPython)
     expect(world.receiverRuns()).toEqual([])
+    expect(
+      world.runs.map(run => run.join(' ')),
+      'python3、python、py -3 の順に 1 回ずつ確かめる (結果は覚えておく)',
+    ).toEqual(['python3 --version', 'python --version', 'py -3 --version'])
   })
+
+  for (const [python, expected] of [
+    ['python', ['python']],
+    ['py', ['py', '-3']],
+  ] as const) {
+    test(`python3 が Microsoft Store のスタブなら ${expected.join(' ')} で受信サーバを起動し、ブラウザも開く`, async ($, on) => {
+      const world = Fixtures.world(on, { python })
+      await $.session.start(Fixtures.SESSION)
+      await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: true, waitSeconds: 0 })
+      await world.clock.settle()
+
+      expect(world.receiverRuns().map(run => run.slice(0, expected.length))).toEqual([[...expected]])
+      expect(world.receiverCommandRuns('open').map(run => run.slice(0, expected.length))).toEqual([[...expected]])
+    })
+  }
 })

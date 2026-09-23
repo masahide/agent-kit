@@ -4,7 +4,7 @@
 
 Document Interview Mod (MVP)。Claude が文書を書く前に、文書の構成案と決定してほしい論点を
 質問票 JSON としてツール `open_form` に渡すと、この Mod が自己完結の HTML シートを
-`./interview/` に書き、python3 の受信サーバをローカルに立ててブラウザで開きます。
+`./interview/` に書き、Python 3 の受信サーバをローカルに立ててブラウザで開きます。
 人がブラウザで答えて [送信] を押すと、受信サーバが回答 JSON をファイルに書いて終了し、
 Mod がそれを回答固定形 (`【インタビュー回答】` で始まる文) にして Claude に届けます。
 
@@ -24,13 +24,13 @@ sequenceDiagram
     participant U as 人
     participant C as Claude
     participant M as Mod
-    participant R as 受信サーバ (python3)
+    participant R as 受信サーバ (Python 3)
     participant B as ブラウザ
     C->>M: tool.call open_form(質問票 JSON)
     M->>M: 検証 → ./interview/<label>.json と .html を書く
-    M->>R: $.process.run(sh -c "nohup python3 receiver.py ... &")
+    M->>R: $.process.run([python, receiver.py, start, ...]) (シェルは使わない)
     M->>M: port-file を最大 3 秒ポーリングして port と pid を得る
-    M->>B: $.process.run(open <url>) (macOS) / xdg-open (Linux)
+    M->>B: $.process.run([python, receiver.py, open, <url>])
     M->>M: $.ui.open(pane) で URL と状態を表示
     Note over M: $.clock.every(500ms) で回答ファイルを監視 (同期待ち中は経過秒数の更新だけ)
     loop 同期待ち (waitSeconds まで、既定 300 秒)
@@ -67,12 +67,12 @@ sequenceDiagram
 | `hooks/form/schema.ts` | `$.tool.register` に渡す JSON Schema |
 | `hooks/sheet/render-html.ts` | 質問票 → 自己完結 HTML (素の JS を文字列で埋める)。左に構成案、右に選んだものの詳細 (全体の進み具合と次に見る項目 / 決定 / 表の説明)、下に進捗と送信。構成案の HTML はブラウザで DOMParser にかけ、許可した要素と属性だけで組み直す |
 | `hooks/reply/format.ts` | 回答 JSON + 質問票 → 回答固定形 v1 |
-| `hooks/receiver/index.ts` | 受信サーバの argv、前回の回答を消す argv、port-file の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
+| `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、port-file の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
 | `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む |
 | `hooks/views/pane-view.ts` | 待機中のペイン (Box / Text / Button / Link) |
 | `hooks/views/strings.ts` | 固定文言 |
 | `hooks/tool-input.d.ts` | `McpToolInputs` にツールの入力を足す宣言 (型付けのみ) |
-| `scripts/receiver.py` | ローカル受信サーバ (python3 標準ライブラリのみ、127.0.0.1、`/wait` のロングポーリング付き) |
+| `scripts/receiver.py` | ローカル受信サーバ (Python 3 の標準ライブラリのみ、127.0.0.1、`/wait` のロングポーリング付き) と、OS ごとに違う操作のサブコマンド (`start` で切り離して起動、`open` でブラウザ、`clean` で削除、`stop` で停止) |
 | `skills/document-interview/` | Claude 側の手順 (SKILL.md) と references (下の「スキル」) |
 | `tests/` | `claude plugin test` のテストと fixtures |
 
@@ -86,8 +86,8 @@ sequenceDiagram
 
 | event | what the hook does |
 | --- | --- |
-| `session.start` | `$` を host に束ね、ツール `open_form` と `/interview` を登録し、`python3 --version` を 1 回確かめて結果を保持する。`e.cwd` を証跡の置き場の基準にする |
-| `tool.call` of `mcp__document-interview__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`interview/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` と `.port.json` を `rm -f` で消し、受信サーバを `nohup` で起動して port-file を最大 3 秒待ち、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
+| `session.start` | `$` を host に束ね、ツール `open_form` と `/interview` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする |
+| `tool.call` of `mcp__document-interview__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`interview/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` と `.port.json` を `receiver.py clean` で消し、受信サーバを `receiver.py start` で切り離して起動して port-file を最大 3 秒待ち、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
 | `command.run` of `interview` | 待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。待機中でなければ「待機中の質問票はありません」 |
 | `ui.render` of `Pane` (requestId `interview`) | label と revision、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
 | `ui.close` of `interview` | 人が閉じても監視は続け、状態行に「/interview で開き直せます」を出す |
@@ -107,13 +107,15 @@ validate の印字:
 `clock.after` (port-file の待ち), `clock.every` (回答の監視), `clock.now`,
 `command.register`, `fs.exists`, `fs.read`, `fs.write`,
 `http.fetch` (同期待ちの `GET /wait?t=…&timeout=4`。127.0.0.1 の受信サーバへ),
-`process.run` (`python3 --version`、`rm -f`、`nohup python3 receiver.py ...`、`open` / `xdg-open`、`kill`),
+`process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
 `prompt.submit`, `tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`。
 `$.plugin.root` も読みます (呼び出しではないので印字されません)。`model`, `store` は使いません。
 
 `$.process.run` は型定義で「CLI only」とされています。ここでの CLI は、ローカルで動く Claude Code のプロセスを指すと
-読んでいます。Claude Code Desktop もローカルの Claude Code を動かすので、受信サーバの起動、ブラウザを開く、`kill`、`rm` は
+読んでいます。Claude Code Desktop もローカルの Claude Code を動かすので、受信サーバの起動、ブラウザを開く、停止、削除は
 Desktop でも動きました (2026-09-23 確認、`answered` まで通過。フォームは既定のブラウザで開く)。
+Mod はシェルを使わず、`receiver.py` のサブコマンドだけを呼ぶので、Windows でも同じ argv で動きます
+(`sh`、`nohup`、`rm`、`kill`、`xdg-open` は Windows のプロセスからは見つかりません)。
 Desktop では `~/.claude/settings.json` の `env` に `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` と
 `CLAUDE_CODE_PLUGIN_DIRS=<このフォルダの絶対パス>` を書いて読み込ませます。
 Desktop ではペイン (`$.ui.open`) が描かれませんでした。`/interview` で人が求めて開いても出ません (2026-09-23 確認。
@@ -178,15 +180,23 @@ npx -y -p typescript tsc -p plugins/document-interview --noEmit
 
 `tsc` はリポジトリ直下の `.claude/types/` (`claude -p "/plugin-types"` が生成、git には入れない) を読みます。
 
+Windows では、エンジンが `$.fs` に渡したパスを `C:\work\interview\x.json` の形に直してフックへ渡します。
+テストの偽装 (`tests/fixtures/world.ts`) は、パスを `/work/interview/x.json` の形にそろえてから照合します。
+`process.run` の argv は直されないので、そのまま照合します。
+
 受信サーバ単体:
 
 ```sh
-python3 plugins/document-interview/scripts/receiver.py --port-file /tmp/x.port.json --token t \
-  --html interview/spec-auth-01.html --out /tmp/x.answer.json
+python3 plugins/document-interview/scripts/receiver.py serve --port-file /tmp/x.port.json --token t \
+  --html interview/spec-auth-01.html --out /tmp/x.answer.json          # 前面で動かす (start なら切り離してすぐ戻る)
 curl "http://127.0.0.1:<port>/?t=t"                       # HTML (トークン無しは 403)
 curl "http://127.0.0.1:<port>/wait?t=t&timeout=4"          # 回答の POST か 4 秒まで保留 → {"answered":true|false}
 curl -X POST -d '{"answers":{}}' "http://127.0.0.1:<port>/answer?t=t"   # 書いて、保留中の /wait に応答してから終了
+python3 plugins/document-interview/scripts/receiver.py stop <pid>        # 止める (もう無ければ何もしない)
+python3 plugins/document-interview/scripts/receiver.py clean /tmp/x.answer.json /tmp/x.port.json   # 消す
 ```
+
+Windows で `python3` が Microsoft Store の案内に当たるときは、`python` か `py -3` に読み替えます (Mod もこの順に探します)。
 
 `<port>` は `/tmp/x.port.json` の `port` です。
 
