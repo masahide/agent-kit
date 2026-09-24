@@ -30,6 +30,7 @@ describe('回答前の書き込みを止める', () => {
       decision: 'deny',
       reason: STRINGS.guardReasonOf('spec-auth-01', 'docs/auth.md'),
     })
+    expect(STRINGS.guardReasonOf('l', 'p'), 'モデルに「やめてターンを終える」ことを伝える').toContain('ターンを終え')
     expect(await $.tool.check(write('/work/docs/./x/../auth.md')), '絶対パスと .. でも止める').toMatchObject({
       decision: 'deny',
     })

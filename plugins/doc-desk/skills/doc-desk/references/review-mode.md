@@ -53,7 +53,7 @@
 | `revision` | 必須 | 1 以上の整数。同じ文書で指摘の画面を出し直すたびに 1 つ進めます |
 | `label` | 必須 | `^[A-Za-z0-9_-]{1,64}$`。画面の名前です。Mod は `doc-desk/<label>.doc.html` を読み、証跡を `doc-desk/<label>.*` に書きます。質問票の `label` とは別の名前にします (例: `spec-auth-01-review`、出し直しは `spec-auth-01-review-r2`) |
 | `title` | 必須 | 画面の上に出す文書の題名 |
-| `source` | 任意 | 元の文書のパス。人に見せるだけです |
+| `source` | 任意 | 元の文書のパス。画面に出すほか、指摘が届くまで Mod がこのパスへの書き込みを止めます (`doc-desk/<label>.doc.html` も止めます) |
 | `part` | 任意 | 分けて出すときの `{ "index": 2, "total": 3 }` (index は 1 から、total は 2〜50) |
 
 `waitSeconds` と `openBrowser` は `open_form` と同じです。結果の `status` (`answered` / `pending` / `cancelled` / `invalid` / `failed`) も `open_form` と同じ意味です。違いは次のとおりです。

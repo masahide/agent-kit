@@ -308,6 +308,7 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 - パスの照合で Windows かどうかは、cwd かパスがドライブ名で始まるか `\` を含むかで決めます (モジュールに Node が無いため)。Windows では小文字にそろえて比べます。
 - 完全な例 (`form-spec-v1.md` と `tests/fixtures/spec-auth-01.form.json`) にも `source` を足しました。SKILL.md は `source` を常に書く手順にしました。
 - 実機で確かめていないこと: `deny` の `reason` がモデルにそのまま届くか。
+- レビューを受けて直したこと (2026-09-24): `reason` を人向けの案内 (「/doc-desk で開き直せます」) から、モデルへの指示 (書き込みをやめてターンを終え、回答を待つ。Bash でも書かない) に変えた。macOS のように大文字小文字を区別しないファイルシステムで綴りだけ違う書き込みを拾えない限界を README と form-spec-v1.md に書いた。`review.source` の説明 (`review-mode.md`、`review-v1.ts`) の「人に見せるだけ」を直した。
 
 ## 付録 A. 根拠にした一次情報
 

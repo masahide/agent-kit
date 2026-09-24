@@ -249,7 +249,7 @@ Windows で `python3` が Microsoft Store の案内に当たるときは、`pyth
 Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` で listen するので、使用中の port を横取りしません
 (2026-09-24 確認: 使用中の port を指定すると別の port になり、TIME_WAIT だけ残る port は取り直せる)。
 
-書き込みを止める範囲の限界: `tool.check` で見るのは `Write`、`Edit`、`NotebookEdit` の書き込み先だけです。`Bash` の heredoc やリダイレクト (`cat > docs/auth.md`) は拾いません。質問票に `source` が無いときも止めません (SKILL.md の禁則だけになります)。
+書き込みを止める範囲の限界: `tool.check` で見るのは `Write`、`Edit`、`NotebookEdit` の書き込み先だけです。`Bash` の heredoc やリダイレクト (`cat > docs/auth.md`) は拾いません。大文字小文字をそろえて比べるのは Windows のパス (ドライブ名で始まる) だけなので、macOS の既定のファイルシステムのように大文字小文字を区別しない所で、ファイルがまだ無いときに `Docs/Auth.md` のように綴りを変えて書かれると拾えません (ファイルがあれば `realPath` で比べるので拾えることがありますが、`realPath` は大文字小文字の違う綴りをそのまま返すことがあり、確実ではありません)。質問票に `source` が無いときも止めません (SKILL.md の禁則だけになります)。
 
 ## 実機で確かめていないこと (2026-09-23 時点)
 
