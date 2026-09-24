@@ -48,6 +48,8 @@ export type Host = {
   storeSet: (key: string, value: unknown) => Promise<void>
   /** `$.store.delete` */
   storeDelete: (key: string) => Promise<void>
+  /** `$.store.keys` (同じフォルダの記録を探す) */
+  storeKeys: () => Promise<string[]>
   /** `$.ui.open` */
   openPane: (pane: PaneOpenArgs) => Promise<unknown>
   /** `$.ui.close` */

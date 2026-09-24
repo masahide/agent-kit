@@ -1,6 +1,14 @@
 /**
  * Mod が描く固定文言。ja-text-communication の規範に沿って一文一義で書きます。
  */
+/**
+ * 画面の種類。`form` は質問票 (`open_form`)、`review` は指摘の画面 (`open_review`)。
+ */
+export type SheetKind = 'form' | 'review'
+
+/** 画面の種類の呼び名 */
+export const sheetNameOf = (kind: SheetKind): string => (kind === 'form' ? '質問票' : '指摘の画面')
+
 export const STRINGS = {
   /** ペインのタイトル */
   paneTitle: 'doc-desk',
@@ -23,17 +31,24 @@ export const STRINGS = {
   /** 待機中に `/doc-desk` を実行したときの返答 */
   reopenedOf: (url: string) => `インタビューのペインとブラウザを開き直しました: ${url}`,
   /** 起動時に、前のセッションの回答が届いていたとき (トランスクリプト行と通知) */
-  unsentOf: (label: string) => `質問票 ${label} の回答が届いています。/doc-desk で Claude に送れます`,
+  unsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答が届いています。/doc-desk で Claude に送れます`,
   /** 未送の回答を `/doc-desk` で送ったときの返答 */
-  sentUnsentOf: (label: string) => `質問票 ${label} の回答を Claude に送りました`,
+  sentUnsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答を Claude に送ります`,
+  /** 未送の回答を送れなかったとき */
+  unsentFailedOf: (kind: SheetKind, label: string) =>
+    `${sheetNameOf(kind)} ${label} の回答を送れませんでした。/doc-desk でもう一度送れます`,
   /** 起動時に、前のセッションの待機を引き継いだときの状態行 */
-  carriedOverOf: (label: string) => `前回の質問票 ${label} が未回答です。/doc-desk で開き直せます`,
+  carriedOverOf: (kind: SheetKind, label: string) => `前回の${sheetNameOf(kind)} ${label} が未回答です。/doc-desk で開き直せます`,
   /** 引き継いで受信サーバを起動し直したら port が変わったとき */
-  portChangedOf: (label: string, url: string) => `質問票 ${label} の URL が変わりました: ${url}`,
+  portChangedOf: (kind: SheetKind, label: string, url: string) => `${sheetNameOf(kind)} ${label} の URL が変わりました: ${url}`,
   /** 引き継いで受信サーバを起動し直せなかったとき */
-  restartFailedOf: (label: string) => `前回の質問票 ${label} の受信サーバを起動し直せませんでした`,
+  restartFailedOf: (kind: SheetKind, label: string) => `前回の${sheetNameOf(kind)} ${label} の受信サーバを起動し直せませんでした`,
   /** 7 日より古い記録を捨てたとき */
-  staleRecordOf: (label: string) => `前回の質問票 ${label} は 7 日より前のものなので、引き継ぎませんでした`,
+  staleRecordOf: (kind: SheetKind, label: string) =>
+    `前回の${sheetNameOf(kind)} ${label} は 7 日より前のものなので、引き継ぎませんでした`,
+  /** 同じフォルダの別のセッションが待機を持っているとき */
+  ownedByOtherOf: (kind: SheetKind, label: string) =>
+    `${sheetNameOf(kind)} ${label} は同じフォルダの別のセッションが回答を待っているので、このセッションでは引き継ぎません`,
   /** 畳んだ回答行の 2 行目 */
   replyRowHintOf: (mdPath: string | undefined) => (mdPath ? `${mdPath}  (ctrl+o で全文)` : 'ctrl+o で全文'),
   /** 待機中の turn の答えの下に 1 回だけ添える行 */
@@ -42,7 +57,8 @@ export const STRINGS = {
   receivedToastOf: (label: string) => `回答を受け取りました: ${label}`,
   /** 回答待ちの間に対象の文書へ書こうとしたときの deny の理由 (モデルが読む) */
   guardReasonOf: (label: string, path: string) =>
-    `doc-desk: ${label} の回答待ちです。回答が届くまで ${path} は書きません。/doc-desk で開き直せます`,
+    `doc-desk: ${label} の回答待ちなので、${path} への書き込みを止めました。この文書への書き込みをやめてターンを終え、` +
+    '回答が届くのを待ってください (Bash など別の手段でも書かないでください)。人には「ブラウザで答えるか、/doc-desk で開き直してください」と伝えてください',
   /** 会話の圧縮で要約に足す指示 */
   compactInstructions:
     'doc-desk の決定 (【doc-desk 回答】で始まる人の回答) は省略しないでください。決めた項目と選んだ案、指摘と書き換えを残してください。',
