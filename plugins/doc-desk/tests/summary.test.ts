@@ -1,6 +1,8 @@
 import { describe, expect, test, tier } from 'claude-code/testing'
 
+import { formatReply } from '../hooks/reply/format'
 import { summarizeReply } from '../hooks/reply/summary'
+import { formatReviewReply } from '../hooks/review/format'
 import Fixtures from './fixtures'
 
 tier('user')
@@ -12,6 +14,20 @@ describe('summarizeReply', () => {
       detail: 'Q1=A  Q2=お任せ  補足 2 件',
     })
     expect(summarizeReply(Fixtures.REPLY_BARE)).toEqual({ documentId: 'spec-auth-01', detail: 'Q1=B  Q2=A' })
+  })
+
+  test('表の無い質問票で全体へのコメントがあっても畳む (コメントの中の行は数えない)', () => {
+    const reply = formatReply(Fixtures.FORM_NO_TABLES, {
+      ...Fixtures.ANSWER_BARE,
+      globalNote: '全体に短く\nQ9. 題: Z — 紛らわしい行\n#3 削除',
+    })
+    expect(summarizeReply(reply)).toEqual({ documentId: 'spec-auth-01', detail: 'Q1=B  Q2=A  補足 1 件' })
+
+    const review = formatReviewReply(Fixtures.REVIEW, {
+      ...Fixtures.REVIEW_ANSWER_EMPTY,
+      globalNote: '全体に\n#3 削除\n#4 書き換え (そのまま)',
+    })
+    expect(summarizeReply(review)?.detail).toBe('指摘 0 件  全体へのコメントあり')
   })
 
   test('問いの題に「: 」があっても選んだ案を読む', () => {
