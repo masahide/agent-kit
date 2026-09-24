@@ -18,6 +18,8 @@ declare module 'claude-code' {
       openBrowser?: boolean
       /** 呼び出しの中で指摘を待つ上限 (秒)。既定 300、0 で待たない、上限 1800 */
       waitSeconds?: number
+      /** Claude の指摘の候補を画面に出すか。既定 true (plugin の設定 selfReview が false なら出さない) */
+      selfReview?: boolean
     }
   }
 }

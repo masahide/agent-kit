@@ -141,7 +141,7 @@ describe('review', () => {
   test('renderReviewHtml: 文書は HTML として差し込まず、JSON で渡して許可リストで組み直す', async () => {
     const html = renderReviewHtml({ review: Fixtures.REVIEW, html: Fixtures.DOC_HTML, date: DATE })
     const json = /<script type="application\/json" id="di-review">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? ''
-    expect(JSON.parse(json)).toEqual({ review: Fixtures.REVIEW, html: Fixtures.DOC_HTML })
+    expect(JSON.parse(json)).toEqual({ review: Fixtures.REVIEW, html: Fixtures.DOC_HTML, candidates: [] })
     expect(json).not.toContain('<')
     expect(html).not.toContain('<h2>認証方式</h2>')
     expect(html).toContain('<div class="outline doc-body" id="di-doc"></div>')

@@ -1,4 +1,4 @@
-import type { On, Timer } from 'claude-code'
+import type { On, PluginOptions, Timer } from 'claude-code'
 
 import { parseAnswer } from './form/answer'
 import type { FormV1 } from './form/form-v1'
@@ -31,7 +31,8 @@ import {
 import { formatReply } from './reply/format'
 import { summarizeReply } from './reply/summary'
 import { parseReviewAnswer } from './review/answer'
-import { documentErrors } from './review/document'
+import { candidatePrompt, parseCandidates, wantsSelfReview, type ReviewCandidate } from './review/candidates'
+import { documentErrors, numberedBlocks } from './review/document'
 import { formatReviewReply } from './review/format'
 import type { ReviewV1 } from './review/review-v1'
 import { validateReview } from './review/validate-review'
@@ -62,6 +63,8 @@ type Paths = {
   answer: string
   md: string
   doc: string
+  /** 指摘の画面に出した Claude の候補 (証跡) */
+  candidates: string
 }
 
 /**
@@ -192,8 +195,9 @@ const dateOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10)
  * ```
  *
  * @param on エンジンの登録関数
+ * @param options plugin.json の `userConfig` の値 (`selfReview`: 指摘の画面に Claude の候補を出すか。既定 true)
  */
-export function register(on: On) {
+export function register(on: On, options: PluginOptions = {}) {
   let host: Host | null = null
   let cwd = ''
   let pythonProbe: Promise<readonly string[] | null> | null = null
@@ -218,6 +222,7 @@ export function register(on: On) {
       answer: `${base}.answer.json`,
       md: `${base}.md`,
       doc: `${base}.doc.html`,
+      candidates: `${base}.candidates.json`,
     }
   }
 
@@ -702,6 +707,7 @@ export function register(on: On) {
       toast: text => $.ui.toast(text),
       submitPrompt: input => $.prompt.submit(input),
       suggest: input => $.prompt.suggest(input),
+      fork: request => $.model.fork(request),
       pluginRoot: $.plugin.root,
     }
     host = engine
@@ -790,12 +796,23 @@ export function register(on: On) {
       return invalid(errors.map(message => `${paths.doc}: ${message}`))
     }
 
+    // Claude 自身の指摘の候補 (fork に 1 問だけ投げる)。失敗しても候補なしで進む
+    let candidates: ReviewCandidate[] = []
+    if (wantsSelfReview(options, e.selfReview)) {
+      const blocks = numberedBlocks(html)
+      const reply = await engine.fork({ prompt: candidatePrompt(blocks, review.title) }).catch(() => null)
+      if (reply?.isAnswered) {
+        candidates = parseCandidates(reply.text, blocks.length)
+      }
+      await engine.writeFile(paths.candidates, `${JSON.stringify(candidates, null, 2)}\n`)
+    }
+
     await dropPending(engine, 'replaced')
 
     const nowMs = await engine.now()
 
     await engine.writeFile(paths.form, `${JSON.stringify(review, null, 2)}\n`)
-    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs) }))
+    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs), candidates }))
 
     return serveSheet(engine, sheetOfReview(review, paths), {
       nowMs,

@@ -10,6 +10,11 @@ export const REVIEW_CLOSING =
   '「ここは良い」の指摘がある箇所は直さないでください。指摘も書き換えも無ければ、そのまま完了報告に進んでください。'
 
 /**
+ * Claude の候補を人が採用した指摘の行末に付ける印。
+ */
+export const CANDIDATE_MARK = '(Claude の候補)'
+
+/**
  * 「指摘した段落」に載せる段落の文字数の上限。超えた分は「…」にします。
  */
 export const MAX_BLOCK_EXCERPT = 400
@@ -55,6 +60,7 @@ function editLines(edit: ReviewEdit, before: string | undefined): string[] {
  * ## 指摘
  * #3 [短くする]
  * #7 [根拠が要る] 「応答が速くなる」 何秒から何秒になるかを足してほしい
+ * #9 [短くする] 前置きを削る (Claude の候補)
  * ## 指摘した段落
  * #3 <段落の文字列>
  * #7 <段落の文字列>
@@ -107,6 +113,7 @@ export function formatReviewReply(review: ReviewV1, answer: ReviewAnswerV1): str
       if (quote !== '') parts.push(`「${quote}」`)
       const text = flattened(comment.text)
       if (text !== '') parts.push(text)
+      if (comment.source === 'claude') parts.push(CANDIDATE_MARK)
       lines.push(parts.join(' '))
     }
 

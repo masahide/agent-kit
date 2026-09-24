@@ -33,6 +33,182 @@ const ALLOWED_TAGS: ReadonlySet<string> = new Set(DOCUMENT_TAGS)
 const BLOCKS: ReadonlySet<string> = new Set(BLOCK_TAGS)
 
 /**
+ * 段落の「自分の文字」に数える子の要素 (画面の JS の `INLINE` と同じ)。
+ */
+const INLINE_TAGS: ReadonlySet<string> = new Set(['strong', 'em', 'code', 'span', 'br'])
+
+/**
+ * 開くと、開いている `<p>` を閉じる要素 (HTML の構文解析の規則のうち、許可リストにあるもの)。
+ */
+const CLOSES_P: ReadonlySet<string> = new Set(['p', 'h2', 'h3', 'h4', 'ul', 'ol', 'dl', 'pre', 'table', 'blockquote', 'hr', 'div'])
+
+/**
+ * 開くと、同じ種類の開いている要素を閉じる要素と、その閉じ方の境目。
+ * 例: `<li>` は、`<ul>` か `<ol>` の手前までにある開いた `<li>` を閉じます。
+ */
+const CLOSES_SIBLING: Readonly<Record<string, { siblings: readonly string[]; boundary: readonly string[] }>> = {
+  li: { siblings: ['li'], boundary: ['ul', 'ol'] },
+  dt: { siblings: ['dt', 'dd'], boundary: ['dl'] },
+  dd: { siblings: ['dt', 'dd'], boundary: ['dl'] },
+  tr: { siblings: ['tr'], boundary: ['table', 'thead', 'tbody', 'tfoot'] },
+  td: { siblings: ['td', 'th'], boundary: ['tr', 'table'] },
+  th: { siblings: ['td', 'th'], boundary: ['tr', 'table'] },
+}
+
+const VOID_TAGS: ReadonlySet<string> = new Set(['br', 'hr', 'img', 'wbr'])
+
+type DocNode = { kind: 'text'; text: string } | { kind: 'element'; name: string; children: DocNode[] }
+
+const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+
+const decodeEntities = (text: string): string =>
+  text.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[A-Za-z]+);/g, (whole, body: string) => {
+    if (body.startsWith('#x') || body.startsWith('#X')) {
+      return String.fromCodePoint(Number.parseInt(body.slice(2), 16))
+    }
+    if (body.startsWith('#')) {
+      return String.fromCodePoint(Number.parseInt(body.slice(1), 10))
+    }
+    return ENTITIES[body.toLowerCase()] ?? whole
+  })
+
+/**
+ * 文書の HTML を木にします。ブラウザの DOMParser と同じ段落の並びになるよう、許可リストの要素に
+ * 効く暗黙の閉じ (`<p>`、`<li>`、`<dt>`/`<dd>`、`<tr>`、`<td>`/`<th>`) だけを真似ます。
+ * 許可リストに無い要素は、画面と同じく中身ごと捨てます。
+ */
+function parseDocument(html: string): DocNode[] {
+  const root: DocNode & { kind: 'element' } = { kind: 'element', name: '#root', children: [] }
+  const stack: (DocNode & { kind: 'element' })[] = [root]
+  let skipDepth = 0
+  const top = () => stack[stack.length - 1]!
+  const closeUpTo = (index: number) => {
+    stack.length = index
+  }
+  const findOpen = (names: readonly string[], boundary: readonly string[]): number => {
+    for (let index = stack.length - 1; index > 0; index -= 1) {
+      const name = stack[index]!.name
+      if (names.includes(name)) {
+        return index
+      }
+      if (boundary.includes(name)) {
+        return -1
+      }
+    }
+    return -1
+  }
+
+  const source = html.replace(/<!--[\s\S]*?-->/g, '')
+  const TOKEN = /<(\/?)([A-Za-z][A-Za-z0-9-]*)([^>]*)>|([^<]+|<)/g
+  for (const match of source.matchAll(TOKEN)) {
+    const text = match[4]
+    if (text !== undefined) {
+      if (skipDepth === 0) {
+        const parent = top()
+        // <pre> の直後の改行 1 つは HTML の規則で捨てる
+        const value = decodeEntities(parent.name === 'pre' && parent.children.length === 0 ? text.replace(/^\r?\n/, '') : text)
+        if (value !== '') {
+          parent.children.push({ kind: 'text', text: value })
+        }
+      }
+      continue
+    }
+    const isClosing = match[1] === '/'
+    const name = (match[2] ?? '').toLowerCase()
+    const isSelfClosing = /\/\s*$/.test(match[3] ?? '')
+
+    if (!ALLOWED_TAGS.has(name)) {
+      if (!VOID_TAGS.has(name) && !isSelfClosing) {
+        skipDepth = Math.max(0, skipDepth + (isClosing ? -1 : 1))
+      }
+      continue
+    }
+    if (skipDepth > 0) {
+      continue
+    }
+
+    if (isClosing) {
+      const index = findOpen([name], [])
+      if (index > 0) {
+        closeUpTo(index)
+      }
+      continue
+    }
+
+    if (CLOSES_P.has(name)) {
+      const index = findOpen(['p'], ['table', 'td', 'th', 'li', 'dd', 'dt'])
+      if (index > 0) {
+        closeUpTo(index)
+      }
+    }
+    const rule = CLOSES_SIBLING[name]
+    if (rule) {
+      const index = findOpen(rule.siblings, rule.boundary)
+      if (index > 0) {
+        closeUpTo(index)
+      }
+    }
+    const element: DocNode & { kind: 'element' } = { kind: 'element', name, children: [] }
+    top().children.push(element)
+    if (!VOID_TAGS.has(name) && !isSelfClosing) {
+      stack.push(element)
+    }
+  }
+  return root.children
+}
+
+const textContentOf = (node: DocNode): string =>
+  node.kind === 'text' ? node.text : node.children.map(textContentOf).join('')
+
+/** 直下の文字と、直下の強調やコードの文字 (画面の JS の `ownText`) */
+const ownTextOf = (element: DocNode & { kind: 'element' }): string =>
+  element.children
+    .map(child =>
+      child.kind === 'text' ? child.text : INLINE_TAGS.has(child.name) ? (child.name === 'br' ? ' ' : textContentOf(child)) : '',
+    )
+    .join('')
+
+/**
+ * 段落番号と段落の文字列。画面 (`sheet/render-review.ts` の JS) が振る番号と同じ規則で振ります:
+ * `BLOCK_TAGS` の要素を上から順に、自分の文字を持つもの (`pre` と `tr` は常に) だけ数えます。
+ * 表の行は各セルの文字を ` | ` でつなぎ、`pre` は文字をそのまま、それ以外は空白を 1 つに畳みます。
+ *
+ * @param html `doc-desk/<label>.doc.html` の中身 (検査済み)
+ * @returns 段落 (番号は 1 から)
+ */
+export function numberedBlocks(html: string): { n: number; text: string }[] {
+  const blocks: { n: number; text: string }[] = []
+  const visit = (nodes: readonly DocNode[]) => {
+    for (const node of nodes) {
+      if (node.kind !== 'element') {
+        continue
+      }
+      if (BLOCKS.has(node.name)) {
+        const isAlways = node.name === 'pre' || node.name === 'tr'
+        const own = ownTextOf(node)
+        if (isAlways || own.trim() !== '') {
+          const text =
+            node.name === 'tr'
+              ? node.children
+                  .filter(child => child.kind === 'element')
+                  .map(cell => textContentOf(cell).trim())
+                  .join(' | ')
+              : node.name === 'pre'
+                ? textContentOf(node)
+                : own.replace(/\s+/g, ' ').trim()
+          if (text.trim() !== '') {
+            blocks.push({ n: blocks.length + 1, text })
+          }
+        }
+      }
+      visit(node.children)
+    }
+  }
+  visit(parseDocument(html))
+  return blocks
+}
+
+/**
  * 文書の HTML を検査し、直し方を書いたエラー文を返します (パスは付けません)。
  *
  * @param html `doc-desk/<label>.doc.html` の中身
