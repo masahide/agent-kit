@@ -100,11 +100,11 @@ session.start           記録があれば:
 
 | ファイル | 変更 |
 |---|---|
-| `hooks/register.ts` | `Sheet` を作る部分を `sheetOfForm(form, paths)` と `sheetOfReview(review, html, paths)` に切り出す (今は 2 つの `tool.call` の中に埋まっている)。`serveSheet` を「受信サーバを起動する」と「待機を組む (`Pending`、監視、ペイン)」に分け、後者を `session.start` からも呼ぶ。`settle` と `dropPending` で記録を消す。`session.start` に上の分岐を足す。`/doc-desk` に「未送の回答を送る」を足す |
+| `hooks/register.ts` | `Sheet` を作る部分を `sheetOfForm(form, paths)` と `sheetOfReview(review, paths)` に切り出す (実装では文書の HTML は `Sheet` に要らなかった) (今は 2 つの `tool.call` の中に埋まっている)。`serveSheet` を「受信サーバを起動する」と「待機を組む (`Pending`、監視、ペイン)」に分け、後者を `session.start` からも呼ぶ。`settle` と `dropPending` で記録を消す。`session.start` に上の分岐を足す。`/doc-desk` に「未送の回答を送る」を足す |
 | `hooks/host/index.ts` | `storeGet`、`storeSet`、`storeDelete`、`toast`、`suggest` を足す |
 | `hooks/store/pending-record.ts` (新規) | 記録の型、読み取り (形が違えば null)、古さの判定 |
 | `hooks/views/strings.ts` | 上の文言 |
-| `tests/register.test.ts` | 下のテスト |
+| `tests/carry-over.test.ts` (新規。計画では `tests/register.test.ts`) | 下のテスト |
 | `usage.md` 4.3〜4.5 章、5 章 | 「閉じても届く」「次の起動で /doc-desk」を書く |
 | `SKILL.md` 手順 5 | `pending` のときの案内に「セッションを閉じても、次の起動で届きます」を足す |
 

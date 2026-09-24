@@ -46,6 +46,31 @@ describe('sync-wait', () => {
     expect(clampWaitSeconds(99999)).toBe(1800)
   })
 
+  test('/wait の後に回答を読んでいる間に差し替えられたら、その回答は返さず dropped', async () => {
+    const files = new Map<string, string>()
+    let isPending = true
+    const { host } = deps(files, async () => {
+      files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+      return ok('{"answered":true}')
+    })
+    const reading: WaitDeps = {
+      ...host,
+      readFile: async path => {
+        // 回答ファイルを読んでいる間に、別の open_form で差し替えられた
+        isPending = false
+        return host.readFile(path)
+      },
+    }
+
+    const end = await waitForAnswer(reading, TARGET, {
+      waitSeconds: 30,
+      signal: new AbortController().signal,
+      isStillPending: () => isPending,
+    })
+
+    expect(end).toEqual({ kind: 'dropped' })
+  })
+
   test('next.signal が abort すると次の周回で pending (abort) を返し、/wait を呼び直さない', async () => {
     const files = new Map<string, string>()
     const controller = new AbortController()

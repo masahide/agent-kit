@@ -75,6 +75,12 @@ export type WorldOptions = {
   python?: PythonCommand
   /** `GET /wait` の答え。省略時は毎回 `{ answered: false }` (timeout まで回答が無かった) */
   waitReply?: (call: WaitCall) => WaitReply | Promise<WaitReply>
+  /** 最初のこの回数の `$.prompt.submit` を失敗させる */
+  refuseSubmits?: number
+  /** `--port` で指定されても取れない (使用中の) port */
+  busyPorts?: number[]
+  /** `$.session.id()` の答え。省略時は `session-now` */
+  sessionId?: string
   /** `$.store` の初めの中身 (前のセッションが残した記録を模す) */
   store?: Record<string, unknown>
 }
@@ -124,6 +130,8 @@ export function world(on: On, options: WorldOptions = {}) {
 
   on('session.start', ($, e) => ({ cwd: e.cwd }))
 
+  on('session.id', () => ({ value: options.sessionId ?? 'session-now' }))
+
   on('tool.register', ($, e) => {
     registeredTools.push(e.name)
     return { value: { tool: `mcp__${PLUGIN_NAME}__${e.name}` } }
@@ -158,6 +166,8 @@ export function world(on: On, options: WorldOptions = {}) {
     return { value: undefined }
   })
 
+  on('store.keys', () => ({ value: [...store.keys()] }))
+
   on('process.run', ($, e) => {
     runs.push(e.argv)
     const python = options.python === undefined ? 'python3' : options.python
@@ -188,7 +198,10 @@ export function world(on: On, options: WorldOptions = {}) {
       if (options.isReceiverUp === false) {
         return { value: { exitCode: 1, stdout: '', stderr: '' } }
       }
-      return { value: { exitCode: 0, stdout: `${JSON.stringify({ port: RECEIVER_PORT, pid: RECEIVER_PID })}\n`, stderr: '' } }
+      // --port があり、塞がっていなければその port を使う (receiver.py と同じ)
+      const wanted = e.argv.includes('--port') ? Number(e.argv[e.argv.indexOf('--port') + 1]) : 0
+      const port = wanted > 0 && !(options.busyPorts ?? []).includes(wanted) ? wanted : RECEIVER_PORT
+      return { value: { exitCode: 0, stdout: `${JSON.stringify({ port, pid: RECEIVER_PID })}\n`, stderr: '' } }
     }
 
     return { value: { exitCode: 0, stdout: '', stderr: '' } }
@@ -231,7 +244,13 @@ export function world(on: On, options: WorldOptions = {}) {
     return { value: undefined }
   })
 
+  let refusedSubmits = 0
   on('prompt.submit', ($, e) => {
+    if (refusedSubmits < (options.refuseSubmits ?? 0)) {
+      // 投入が受け付けられない (フックが失敗し、下の層も答えないので $.prompt.submit が reject する)
+      refusedSubmits += 1
+      throw new Error('prompt.submit refused')
+    }
     submitted.push(e)
     return { text: e.text, ...(e.context && { context: e.context }) }
   })
