@@ -1,5 +1,6 @@
 import { BLOCK_TAGS, DOCUMENT_ATTRIBUTES, DOCUMENT_TAGS } from '../review/document'
 import type { ReviewCandidate } from '../review/candidates'
+import { CANDIDATE_MARK } from '../review/format'
 import { KEEP_CHIP, REVIEW_CHIPS, type ReviewV1 } from '../review/review-v1'
 import { escapeHtml, safeJson, STYLE } from './common'
 
@@ -111,6 +112,7 @@ const SCRIPT = `
   var ATTRIBUTES = ${JSON.stringify(DOCUMENT_ATTRIBUTES)};
   var BLOCKS = ${JSON.stringify(BLOCK_TAGS)};
   var KEEP = ${JSON.stringify(KEEP_CHIP)};
+  var CANDIDATE_MARK = ${JSON.stringify(CANDIDATE_MARK)};
   var INLINE = { STRONG: true, EM: true, CODE: true, SPAN: true, BR: true };
   var data = JSON.parse(document.getElementById('di-review').textContent);
   var review = data.review;
@@ -535,7 +537,7 @@ const SCRIPT = `
         source: 'claude'
       });
     } else if (globalEl) {
-      var line = '[' + candidate.chip + '] ' + candidate.text + ' (Claude の候補)';
+      var line = '[' + candidate.chip + '] ' + candidate.text + ' ' + CANDIDATE_MARK;
       globalEl.value = globalEl.value ? globalEl.value.replace(/\\s+$/, '') + '\\n' + line : line;
     }
     candidate.state = 'adopted';

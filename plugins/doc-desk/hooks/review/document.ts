@@ -59,17 +59,70 @@ const VOID_TAGS: ReadonlySet<string> = new Set(['br', 'hr', 'img', 'wbr'])
 
 type DocNode = { kind: 'text'; text: string } | { kind: 'element'; name: string; children: DocNode[] }
 
-const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+/**
+ * 名前付きの文字参照のうち、文書に出やすいもの。ここに無い名前はそのまま残します
+ * (ブラウザは復号するので、その段落の文字列は画面とずれますが、段落番号はずれません)。
+ */
+const ENTITIES: Readonly<Record<string, string>> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: '\u00a0',
+  ensp: '\u2002',
+  emsp: '\u2003',
+  thinsp: '\u2009',
+  ndash: '\u2013',
+  mdash: '\u2014',
+  hellip: '\u2026',
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  ldquo: '\u201c',
+  rdquo: '\u201d',
+  laquo: '\u00ab',
+  raquo: '\u00bb',
+  middot: '\u00b7',
+  bull: '\u2022',
+  times: '\u00d7',
+  divide: '\u00f7',
+  plusmn: '\u00b1',
+  deg: '\u00b0',
+  copy: '\u00a9',
+  reg: '\u00ae',
+  trade: '\u2122',
+  yen: '\u00a5',
+  euro: '\u20ac',
+  larr: '\u2190',
+  uarr: '\u2191',
+  rarr: '\u2192',
+  darr: '\u2193',
+  harr: '\u2194',
+  rArr: '\u21d2',
+  hArr: '\u21d4',
+  le: '\u2264',
+  ge: '\u2265',
+  ne: '\u2260',
+}
+
+/**
+ * 数値の文字参照を文字にします。0、サロゲート、範囲外 (0x10FFFF 超) はブラウザと同じく U+FFFD にします
+ * (`String.fromCodePoint` が投げてフック全体が落ちないように)。
+ */
+const codePointOf = (value: number): string =>
+  Number.isFinite(value) && value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff)
+    ? String.fromCodePoint(value)
+    : '\ufffd'
 
 const decodeEntities = (text: string): string =>
-  text.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[A-Za-z]+);/g, (whole, body: string) => {
+  text.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[A-Za-z]+);/g, (whole, body: string) => {
     if (body.startsWith('#x') || body.startsWith('#X')) {
-      return String.fromCodePoint(Number.parseInt(body.slice(2), 16))
+      return codePointOf(Number.parseInt(body.slice(2), 16))
     }
     if (body.startsWith('#')) {
-      return String.fromCodePoint(Number.parseInt(body.slice(1), 10))
+      return codePointOf(Number.parseInt(body.slice(1), 10))
     }
-    return ENTITIES[body.toLowerCase()] ?? whole
+    return ENTITIES[body] ?? ENTITIES[body.toLowerCase()] ?? whole
   })
 
 /**

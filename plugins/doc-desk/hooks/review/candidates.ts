@@ -80,8 +80,45 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const CHIPS: ReadonlySet<string> = new Set(REVIEW_CHIPS)
 
+const FENCE = /```(?:json)?\s*\n([\s\S]*?)```/g
+
+const parseArray = (text: string): unknown[] | null => {
+  try {
+    const value: unknown = JSON.parse(text)
+    return Array.isArray(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
 /**
- * fork の返答から候補を取り出します。返答の中の最初の `[` から最後の `]` までを JSON として読み、
+ * 返答の文から JSON の配列を探します。コードフェンスの中を先に試し、無ければ `[` の位置ごとに、
+ * 後ろの `]` までを長い順に試します (前置きに `[S3]` のような括弧があっても、本体の配列を拾うため)。
+ */
+function jsonArrayOf(reply: string): unknown[] | null {
+  for (const match of reply.matchAll(FENCE)) {
+    const found = parseArray((match[1] ?? '').trim())
+    if (found) {
+      return found
+    }
+  }
+  const closes: number[] = []
+  for (let index = reply.indexOf(']'); index >= 0; index = reply.indexOf(']', index + 1)) {
+    closes.push(index)
+  }
+  for (let start = reply.indexOf('['); start >= 0; start = reply.indexOf('[', start + 1)) {
+    for (let at = closes.length - 1; at >= 0 && closes[at]! > start; at -= 1) {
+      const found = parseArray(reply.slice(start, closes[at]! + 1))
+      if (found) {
+        return found
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * fork の返答から候補を取り出します。JSON の配列は `jsonArrayOf` で探し、
  * 形の合う候補だけを残します (段落番号が範囲外、知らないチップ、長すぎる文字、空の `text` は捨てる)。
  * 読めなければ空です。
  *
@@ -89,18 +126,8 @@ const CHIPS: ReadonlySet<string> = new Set(REVIEW_CHIPS)
  * @param blockCount 段落の数
  */
 export function parseCandidates(reply: string, blockCount: number): ReviewCandidate[] {
-  const start = reply.indexOf('[')
-  const end = reply.lastIndexOf(']')
-  if (start < 0 || end <= start) {
-    return []
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(reply.slice(start, end + 1))
-  } catch {
-    return []
-  }
-  if (!Array.isArray(parsed)) {
+  const parsed = jsonArrayOf(reply)
+  if (!parsed) {
     return []
   }
   const candidates: ReviewCandidate[] = []

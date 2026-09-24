@@ -5,7 +5,10 @@ import { candidatePrompt, MAX_CANDIDATES, parseCandidates, wantsSelfReview } fro
 import { numberedBlocks } from '../hooks/review/document'
 import { parseReviewAnswer } from '../hooks/review/answer'
 import { CANDIDATE_MARK, formatReviewReply } from '../hooks/review/format'
+import { STRINGS } from '../hooks/views/strings'
 import Fixtures from './fixtures'
+
+const USAGE = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
 tier('user')
 
@@ -59,6 +62,13 @@ describe('自己指摘の候補', () => {
     ])
   })
 
+  test('numberedBlocks: 範囲外の数値文字参照で落ちず、よく使う名前付き文字参照を復号する', () => {
+    expect(numberedBlocks('<p>a&#1114112;b&#0;c&#xD800;d</p>').map(block => block.text)).toEqual(['a\ufffdb\ufffdc\ufffdd'])
+    expect(numberedBlocks('<p>A&mdash;B&hellip;&rarr;&copy;&unknown;</p>').map(block => block.text)).toEqual([
+      'A\u2014B\u2026\u2192\u00a9&unknown;',
+    ])
+  })
+
   test('candidatePrompt: 段落番号付きの一覧とチップと出力の形を渡す', () => {
     const prompt = candidatePrompt(numberedBlocks(Fixtures.DOC_HTML), '認証方式の仕様')
     expect(prompt).toContain('「認証方式の仕様」')
@@ -91,6 +101,14 @@ describe('自己指摘の候補', () => {
     expect(candidates[4]?.text).toBe('5 件目')
 
     expect(parseCandidates('直すところはありません', 5)).toEqual([])
+    expect(
+      parseCandidates(`検査 [S3, S15] に当たる段落です。\n${JSON.stringify(THREE)}`, 5),
+      '前置きに括弧があっても本体の配列を拾う',
+    ).toEqual(THREE)
+    expect(
+      parseCandidates(`例: [1] と [2]\n\`\`\`json\n${JSON.stringify(THREE.slice(0, 1))}\n\`\`\`\n補足 [x]`, 5),
+      'コードフェンスの中を先に読む',
+    ).toEqual(THREE.slice(0, 1))
     expect(parseCandidates('[{"block": 1', 5)).toEqual([])
     expect(parseCandidates('[]', 5)).toEqual([])
   })
@@ -137,16 +155,41 @@ describe('自己指摘の候補', () => {
     expect(embeddedOf(world.files.get(HTML_PATH) ?? '').candidates).toEqual([])
   })
 
-  test('selfReview: false なら fork を呼ばず、.candidates.json も書かない', async ($, on) => {
+  test('selfReview: false なら fork を呼ばず、前回の .candidates.json も消し、files にも載せない', async ($, on) => {
     const world = Fixtures.world(on)
     await $.session.start(Fixtures.SESSION)
     world.files.set(Fixtures.DOC_PATH, Fixtures.DOC_HTML)
+    world.files.set(CANDIDATES_PATH, JSON.stringify(THREE))
 
-    await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: false, waitSeconds: 0, selfReview: false })
+    const answered = await $.tool.call({
+      tool: FULL_REVIEW_TOOL_NAME,
+      review: Fixtures.REVIEW,
+      openBrowser: false,
+      waitSeconds: 0,
+      selfReview: false,
+    })
     await world.clock.settle()
 
     expect(world.forkPrompts).toEqual([])
     expect(world.files.has(CANDIDATES_PATH)).toBe(false)
+    expect(JSON.parse(answered.result as string).files.candidates).toBeUndefined()
+  })
+
+  test('fork を待つ間に中断されたら、受信サーバもブラウザもペインも出さずに cancelled を返す', async ($, on) => {
+    // fork の最中に人が Esc を押した: fork はその turn の中断で aborted を返す
+    const world = Fixtures.world(on, { forkReply: { isAnswered: false, reason: 'aborted', usage: USAGE } })
+    await $.session.start(Fixtures.SESSION)
+    world.files.set(Fixtures.DOC_PATH, Fixtures.DOC_HTML)
+
+    const answered = await $.tool.call({ tool: FULL_REVIEW_TOOL_NAME, review: Fixtures.REVIEW, openBrowser: true, waitSeconds: 30 })
+    await world.clock.settle()
+
+    const result = JSON.parse(answered.result as string)
+    expect(result.status).toBe('cancelled')
+    expect(result.reason).toBe(STRINGS.abortedDuringSelfReview)
+    expect(world.receiverRuns()).toEqual([])
+    expect(world.receiverCommandRuns('open')).toEqual([])
+    expect(world.opened).toEqual([])
   })
 
   test('採用した候補を含む回答は、固定形で (Claude の候補) 付きになる', async ($, on) => {

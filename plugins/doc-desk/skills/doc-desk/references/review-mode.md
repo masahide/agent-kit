@@ -60,7 +60,7 @@
 
 `waitSeconds` と `openBrowser` は `open_form` と同じです。結果の `status` (`answered` / `pending` / `cancelled` / `invalid` / `failed`) も `open_form` と同じ意味です。違いは次のとおりです。
 
-- `files` は `{ doc, review, html }` (`answered` では `answer` と `md` を足す) です。`review` は検証済みの入力 (`doc-desk/<label>.json`) です。
+- `files` は `{ doc, review, html }` (候補を作ったときは `candidates`、`answered` では `answer` と `md` を足す) です。候補づくりの間に人が中断すると `cancelled` が返り、画面は出ていません。`review` は検証済みの入力 (`doc-desk/<label>.json`) です。
 - `invalid` の `errors` には、`review` の欄の誤りに加えて、HTML ファイルの誤り (`<パス>: <直し方>`) が入ります。ファイルが無い、許可リストに無い要素や属性がある、10 万文字を超える、段落が無い、のどれかです。直して同じツールをもう一度呼びます。
 - `pending` のとき、指摘は後で `【doc-desk 回答】<documentId>` で始まる user turn として届きます。届くまで文書を直さず、完了報告もせず、ターンを終えます。
 

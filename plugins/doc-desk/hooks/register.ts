@@ -17,6 +17,7 @@ import {
 } from './names'
 import {
   cleanupArgv,
+  removeArgv,
   isPython3,
   linkUrlOf,
   openBrowserArgv,
@@ -156,7 +157,7 @@ function sheetOfForm(form: FormV1, paths: Paths): Sheet {
 /**
  * 指摘の画面を組みます。
  */
-function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
+function sheetOfReview(review: ReviewV1, paths: Paths, hasCandidates: boolean): Sheet {
   return {
     kind: 'review',
     documentId: review.documentId,
@@ -168,7 +169,7 @@ function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
       const answer = parseReviewAnswer(text, review)
       return answer ? formatReviewReply(review, answer) : null
     },
-    files: { doc: paths.doc, review: paths.form, html: paths.html },
+    files: { doc: paths.doc, review: paths.form, html: paths.html, ...(hasCandidates && { candidates: paths.candidates }) },
     answeredContext: STRINGS.reviewAnsweredContext,
     pendingContext: STRINGS.reviewPendingContext,
     guardedPaths: [...(review.source === undefined ? [] : [review.source]), paths.doc],
@@ -650,7 +651,7 @@ export function register(on: On, options: PluginOptions = {}) {
         return null
       }
       const { review } = validation
-      sheet = sheetOfReview(review, paths)
+      sheet = sheetOfReview(review, paths, await engine.exists(paths.candidates))
       renderSheet = async () => {
         const html = await engine.readFile(paths.doc).catch(() => null)
         return html === null ? null : renderReviewHtml({ review, html, date: dateOf(record.startedAtMs) })
@@ -894,13 +895,31 @@ export function register(on: On, options: PluginOptions = {}) {
 
     // Claude 自身の指摘の候補 (fork に 1 問だけ投げる)。失敗しても候補なしで進む
     let candidates: ReviewCandidate[] = []
-    if (wantsSelfReview(options, e.selfReview)) {
+    const isSelfReview = wantsSelfReview(options, e.selfReview)
+    if (isSelfReview) {
       const blocks = numberedBlocks(html)
       const reply = await engine.fork({ prompt: candidatePrompt(blocks, review.title) }).catch(() => null)
+      // fork を待つ間に人が中断したら (fork はその turn の中断で aborted を返す)、受信サーバもブラウザも出さずに終える
+      if (next.signal.aborted || (reply !== null && !reply.isAnswered && reply.reason === 'aborted')) {
+        return {
+          result: JSON.stringify({
+            status: 'cancelled',
+            documentId: review.documentId,
+            revision: review.revision,
+            reason: STRINGS.abortedDuringSelfReview,
+          }),
+        }
+      }
       if (reply?.isAnswered) {
         candidates = parseCandidates(reply.text, blocks.length)
       }
       await engine.writeFile(paths.candidates, `${JSON.stringify(candidates, null, 2)}\n`)
+    } else if (await engine.exists(paths.candidates)) {
+      // 前回の候補の証跡を残すと、今回の画面に出した候補と取り違えるので消す
+      const python = await pythonOf(engine)
+      if (python) {
+        await engine.run(removeArgv(python, engine.pluginRoot, [paths.candidates]), { timeoutMs: 5000 }).catch(() => undefined)
+      }
     }
 
     await dropPending(engine, 'replaced')
@@ -910,7 +929,7 @@ export function register(on: On, options: PluginOptions = {}) {
     await engine.writeFile(paths.form, `${JSON.stringify(review, null, 2)}\n`)
     await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs), candidates }))
 
-    return serveSheet(engine, sheetOfReview(review, paths), {
+    return serveSheet(engine, sheetOfReview(review, paths, isSelfReview), {
       nowMs,
       isBrowserWanted: e.openBrowser !== false,
       waitSeconds: clampWaitSeconds(e.waitSeconds),
