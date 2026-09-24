@@ -278,6 +278,14 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 - 受信サーバの生死は `GET /wait?timeout=0` で見ます。`$.http.fetch` に時間の上限を渡す欄は無いので、死んでいるときは接続拒否ですぐ失敗することを当てにしています。
 - 実機で確かめていないこと: `session.start` の中の `$.ui.toast`、`$.ui.log` の見え方と、起動直後の `$.prompt.suggest` が薄い候補として出るか。テストキットでは通っています。
 
+### 段階 2: 回答行を畳む、回答先を添える、届いたら知らせる (2026-09-24)
+
+- `turn.complete` の `{ text }` は、型定義 (2.1.280) の説明「Return `{ text }` with a different text to show it beneath the answer」で「答えの下に出る」と読めたので、答えを置き換えない前提で作りました。
+- matcher の入れ子 `{ component: 'UserMessage', props: { origin: { kind: 'plugin' } } }` は validate が `props.origin has {kind=plugin}` と読みました。フックの中でも `origin.name` が `doc-desk` かを見て、他の plugin の投入は素通しします。
+- 畳んだ行に出す `.md` のパスは、このセッションで届けた固定形だけ覚えています。固定形の見出しは documentId で、label (ファイル名) とは限らないからです。resume した会話の古い行は、パス無しで畳みます。
+- 回答が届いたときの通知は、同期経路と非同期経路の両方で出します (`settle` で出すため)。
+- 実機で確かめていないこと: plugin の投入した行で `UserMessage` の描き換えが呼ばれるか。テストキットでは terminal と desktop の両方で通っています。
+
 ## 付録 A. 根拠にした一次情報
 
 | 資料 | 所在 | 使った箇所 |

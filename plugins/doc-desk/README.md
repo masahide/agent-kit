@@ -76,6 +76,7 @@ sequenceDiagram
 | `hooks/sheet/common.ts` | 2 つの画面が共有する CSS と、HTML と JSON の逃がし |
 | `hooks/sheet/render-review.ts` | 指摘の画面 → 自己完結 HTML。左に文書 (DOMParser で解析し、許可した要素と属性だけで組み直す)、段落に上から番号を振る。右に全体 (指摘と書き換えの数と一覧、全体へのコメント) か、選んだ段落の操作 (チップ、コメント、この段落の指摘、書き換え・削除・移動・追加)。書き換えた段落は左に書き換えた後の文を出す |
 | `hooks/reply/format.ts` | 回答 JSON + 質問票 → 回答固定形 v1 |
+| `hooks/reply/summary.ts` | 回答固定形 → 畳んだ 1 行の中身 (選んだ案と補足の数、指摘と書き換えの数) |
 | `hooks/review/review-v1.ts` | 指摘の画面 (`review`) と指摘の回答 JSON の型 (指摘と添削)、チップ 9 種 |
 | `hooks/review/validate-review.ts` | `review` の検証 (エラーを全部返す) |
 | `hooks/review/document.ts` | 文書の HTML の検査 (構成案と同じ要素、属性は表の colspan と rowspan だけ、10 万文字まで、段落が 1 つ以上) と、段落番号を振る要素 |
@@ -84,6 +85,7 @@ sequenceDiagram
 | `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、`start` が印字する 1 行の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
 | `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む (読み方は画面ごとに渡す) |
 | `hooks/views/pane-view.ts` | 待機中のペイン (Box / Text / Button / Link) |
+| `hooks/views/reply-row.ts` | 畳んだ回答行 (Box / Text。terminal と desktop で同じ木) |
 | `hooks/views/strings.ts` | 固定文言 |
 | `hooks/tool-input.d.ts` | `McpToolInputs` にツールの入力を足す宣言 (型付けのみ) |
 | `scripts/receiver.py` | ローカル受信サーバ (Python 3 の標準ライブラリのみ、127.0.0.1、`/wait` のロングポーリング付き) と、OS ごとに違う操作のサブコマンド (`start` で切り離して起動、`open` でブラウザ、`clean` で削除、`stop` で停止) |
@@ -95,7 +97,7 @@ sequenceDiagram
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate plugins/doc-desk` の印字:
 
 ```
-❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.close{id=doc-desk}
+❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, ui.close{id=doc-desk}
 ```
 
 | event | what the hook does |
@@ -105,6 +107,8 @@ sequenceDiagram
 | `tool.call` of `mcp__doc-desk__open_review` | `review` を検証し、`doc-desk/<label>.doc.html` を読んで検査する (無い、読めない、許可リストに無い要素や属性、10 万文字超、段落なし、のどれかなら `{ status: "invalid", errors }`)。`doc-desk/<label>.json` に `review` を、`.html` に指摘の画面を書き、あとは `open_form` と同じ (受信サーバ、同期待ち、監視、ペイン)。結果の `files` は `{ doc, review, html }` (`answered` では `answer` と `md` を足す) |
 | `command.run` of `doc-desk` | 起動時に見つけた回答が未送なら、`$.clock.after(0)` で回答固定形を `$.prompt.submit` する (`command.run` の中の `prompt.submit` はエンジンが拒むため)。そうでなく待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。どちらでもなければ「待機中の質問票も指摘の画面もありません」 |
 | `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
+| `ui.render` of `UserMessage` (`props.origin.kind` が `plugin`) | この Mod (`origin.name` が `doc-desk`) が投入した `【doc-desk 回答】` の行を 1 行に畳む。質問票は `【doc-desk 回答】<documentId>  Q1=A  Q2=お任せ  補足 n 件`、指摘の画面は `指摘 n 件  書き換え m 件`。2 行目に保存した `.md` のパス (このセッションで届けたものだけ) と「ctrl+o で全文」。`isExpanded` (ctrl+o) のとき、固定形として読めないとき、他の plugin や人の行は `next(e)`。描き換えは行の見え方だけで、モデルが読む文は変わらない |
+| `turn.complete` | 待機中で、main の turn (`agentId` なし) が `reason: "answer"` で終わったとき、1 つの待機につき 1 回だけ `{ text: "回答先: <url>  (/doc-desk で開き直せます)" }` を返して答えの下に出す |
 | `ui.close` of `doc-desk` | 人が閉じても監視は続け、状態行に「/doc-desk で開き直せます」を出す |
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
@@ -135,7 +139,7 @@ validate の印字:
 `process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
 `prompt.submit`, `prompt.suggest` (起動時に届いていた回答を送る `/doc-desk` を候補に出す),
 `store.get` / `store.set` / `store.delete` (待機の記録 `pending:<cwd>`),
-`tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`, `ui.toast`。
+`tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`, `ui.toast` (引き継いだ回答の案内と、回答が届いたときの「回答を受け取りました: <label>」)。
 `$.plugin.root` も読みます (呼び出しではないので印字されません)。`model` は使いません。
 
 `$.process.run` は型定義で「CLI only」とされています。ここでの CLI は、ローカルで動く Claude Code のプロセスを指すと
@@ -240,3 +244,4 @@ Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` で listen す�
 - ペインの `Link` (`http://localhost:<port>`) を押したとき、ブラウザが 127.0.0.1 の受信サーバに届くか (`::1` に解決されたときの切り替え。curl では届く)。
 - `waitSeconds` の既定 300 秒の間、ツール呼び出しが進行中のままで、表示や他のフックに問題が出ないか。
 - 引き継ぎ (2026-09-24 時点): `session.start` の中で出した `$.ui.toast` と `$.ui.log` が、terminal と Desktop で見えるか。`$.prompt.suggest` の `/doc-desk` が起動直後のプロンプト欄に薄い候補として出るか (エンジン自身の候補に上書きされないか)。テストキットでは通っています。
+- 回答行の畳み (2026-09-24 時点): plugin の投入した user turn の行で `ui.render` の `UserMessage` が呼ばれ、畳んだ行が描かれるか。テストキットでは terminal と desktop の両方で通っています。

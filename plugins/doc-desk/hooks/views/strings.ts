@@ -34,6 +34,12 @@ export const STRINGS = {
   restartFailedOf: (label: string) => `前回の質問票 ${label} の受信サーバを起動し直せませんでした`,
   /** 7 日より古い記録を捨てたとき */
   staleRecordOf: (label: string) => `前回の質問票 ${label} は 7 日より前のものなので、引き継ぎませんでした`,
+  /** 畳んだ回答行の 2 行目 */
+  replyRowHintOf: (mdPath: string | undefined) => (mdPath ? `${mdPath}  (ctrl+o で全文)` : 'ctrl+o で全文'),
+  /** 待機中の turn の答えの下に 1 回だけ添える行 */
+  answerUrlOf: (url: string) => `回答先: ${url}  (/doc-desk で開き直せます)`,
+  /** 回答が届いたときの通知 */
+  receivedToastOf: (label: string) => `回答を受け取りました: ${label}`,
   /** 人がペインを閉じたときの状態行 */
   closedHint: '/doc-desk で開き直せます',
   /** [取り消す] のあとのトランスクリプト行 */
