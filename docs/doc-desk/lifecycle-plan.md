@@ -125,7 +125,7 @@ session.start           記録があれば:
 ### 動き
 
 - `ui.render` の `UserMessage` で、`e.props.origin.kind` が `plugin` かつ `e.props.text` が `【doc-desk 回答】` で始まる行だけを描き換えます。他の plugin の投入は `next(e)` で素通しします。`e.props.isExpanded` (ctrl+o) のときも `next(e)` にして全文を出します。
-- 畳んだ行の中身は、質問票なら `【doc-desk 回答】<label>  Q1=B  Q2=お任せ  Q3=A  補足 1 件`、指摘の画面なら `【doc-desk 回答】<label>  指摘 3 件  書き換え 2 件` と、固定形を保存した `.md` のパスです。
+- 畳んだ行の中身は、質問票なら `【doc-desk 回答】<documentId>  Q1=B  Q2=お任せ  Q3=A  補足 1 件`、指摘の画面なら `【doc-desk 回答】<documentId>  指摘 3 件  書き換え 2 件` (見出しは固定形の 1 行目と同じ documentId。実装で label から改めた) と、固定形を保存した `.md` のパスです。
 - `turn.complete` で、`pending` があり、`e.agentId` が無く (main の turn)、`e.reason` が `answer` で、まだその待機で出していなければ、`{ text: "回答先: <url>  (/doc-desk で開き直せます)" }` を返します。1 つの待機につき 1 回だけにします。
 - 回答が届いたとき (`settle`) に `$.ui.toast("回答を受け取りました: <label>")` を出します。
 
