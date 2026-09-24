@@ -1,4 +1,6 @@
 import type {
+  FsStat,
+  FsStatOptions,
   HttpInit,
   HttpResponse,
   PaneCloseArgs,
@@ -34,6 +36,8 @@ export type Host = {
   readFile: (path: string) => Promise<string>
   /** `$.fs.exists` */
   exists: (path: string) => Promise<boolean>
+  /** `$.fs.stat` (`{ resolve: true }` で realPath も。回答待ちの書き込みの照合に使う) */
+  stat: (path: string, options?: FsStatOptions) => Promise<FsStat>
   /** `$.http.fetch` (受信サーバの `/wait` のロングポーリング) */
   fetch: (url: string, init?: HttpInit) => Promise<HttpResponse>
   /** `$.store.get` (待機の記録。セッションをまたいで残る) */

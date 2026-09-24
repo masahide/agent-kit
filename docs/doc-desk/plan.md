@@ -294,6 +294,14 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 - テストキットの `$.session.compact` は `trigger` と `messages` を含む入力をそのまま取るので、`agentId` 付きの圧縮もテストできました。
 - 実機で確かめていないこと: 組み立てた message を足した後の turn が、それを読むか (`/compact` の後に尋ねる)。
 
+### 段階 4: 回答前の実装を止める (2026-09-24)
+
+- 質問票に任意の欄 `source` (1〜1024 文字) を足し、`tool.check` を `Write`、`Edit`、`NotebookEdit` に 1 つずつ掛けました。validate は `tool.check{tool=Write}` のように 3 つを別に読みます。
+- テストキットの `$.tool.check` は `tool_use_id` を含む入力をそのまま取るので、「実際の呼び出しだけを止め、問い合わせには答えない」をテストできました。
+- パスの照合で Windows かどうかは、cwd かパスがドライブ名で始まるか `\` を含むかで決めます (モジュールに Node が無いため)。Windows では小文字にそろえて比べます。
+- 完全な例 (`form-spec-v1.md` と `tests/fixtures/spec-auth-01.form.json`) にも `source` を足しました。SKILL.md は `source` を常に書く手順にしました。
+- 実機で確かめていないこと: `deny` の `reason` がモデルにそのまま届くか。
+
 ## 付録 A. 根拠にした一次情報
 
 | 資料 | 所在 | 使った箇所 |

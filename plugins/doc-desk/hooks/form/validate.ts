@@ -14,6 +14,7 @@ const MAX_QUESTIONS = 5
 const MAX_COLUMNS = 6
 const MAX_ROWS = 20
 const MAX_PREVIEW_LENGTH = 200
+const MAX_SOURCE_LENGTH = 1024
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -53,6 +54,10 @@ export function validateForm(input: unknown): Validation {
 
   if (!Number.isInteger(input.revision) || (input.revision as number) < 1) {
     fail('revision', '1 以上の整数にしてください')
+  }
+
+  if (input.source !== undefined && (!isFilled(input.source) || input.source.length > MAX_SOURCE_LENGTH)) {
+    fail('source', `省略するか、1〜${MAX_SOURCE_LENGTH} 文字の空でない文字列 (これから書く文書のパス) にしてください`)
   }
 
   for (const key of ['title', 'conclusion'] as const) {

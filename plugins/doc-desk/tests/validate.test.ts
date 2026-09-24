@@ -27,6 +27,13 @@ describe('validate', () => {
     expect(validateForm('x')).toEqual({ ok: false, errors: ['form: オブジェクトにしてください'] })
   })
 
+  test('source は省略でき、あれば 1〜1024 文字の空でない文字列', async () => {
+    expect(errorsOf(form => (form.source = 'docs/auth.md'))).toEqual([])
+    expect(errorsOf(form => (form.source = ' '))).toEqual([expect.stringContaining('source:')])
+    expect(errorsOf(form => (form.source = 'a'.repeat(1025)))).toEqual([expect.stringContaining('source:')])
+    expect(errorsOf(form => ((form as { source: unknown }).source = 1))).toEqual([expect.stringContaining('source:')])
+  })
+
   test('schemaVersion は 1', async () => {
     expect(errorsOf(form => ((form as { schemaVersion: number }).schemaVersion = 2))).toEqual([
       'schemaVersion: 1 にしてください',

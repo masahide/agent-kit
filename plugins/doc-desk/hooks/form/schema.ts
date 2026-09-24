@@ -13,6 +13,12 @@ export const FORM_SCHEMA = {
     documentId: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$', description: '文書の識別子' },
     revision: { type: 'integer', minimum: 1, description: '同じ文書の何枚目の質問票か' },
     label: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$', description: '証跡ファイル名 (doc-desk/<label>.json)' },
+    source: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 1024,
+      description: 'これから書く、または更新する文書のパス。回答が届くまで Mod がこのパスへの書き込みを止める',
+    },
     title: { ...nonEmptyString, description: '主張のタイトル (要約ではなく言い切り)' },
     conclusion: { ...nonEmptyString, description: '「結論:」で始まる 3 文以内' },
     glossary: {
@@ -146,7 +152,10 @@ export const REVIEW_SCHEMA = {
       description: '画面の名前。文書の HTML を doc-desk/<label>.doc.html から読み、証跡を doc-desk/<label>.* に書く',
     },
     title: { ...nonEmptyString, description: '画面の上に出す文書の題名' },
-    source: { type: 'string', description: '元の文書のパス (人に見せるだけ)' },
+    source: {
+      type: 'string',
+      description: '元の文書のパス。画面に出し、指摘が届くまで Mod がこのパスと doc-desk/<label>.doc.html への書き込みを止める',
+    },
     part: {
       type: 'object',
       description: '長い文書を分けて出すときの、何回目か (index) と全部で何回か (total)',
