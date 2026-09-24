@@ -10,6 +10,20 @@
 export const RECORD_HEADING = '【doc-desk 決定の記録】'
 
 /**
+ * 決定の記録の message か (前の圧縮で足したものを、次の圧縮で二重に足さないために見る)。
+ */
+export const isDecisionRecord = (text: string): boolean => text.startsWith(RECORD_HEADING)
+
+/**
+ * 回答待ちの画面。圧縮で Tool result と `turn.complete` の URL が消えても、回答先を案内できるように載せます。
+ */
+export type WaitingSheet = {
+  kind: 'form' | 'review'
+  label: string
+  url: string
+}
+
+/**
  * 差し戻す文の上限 (文字)。超えたら各回答を決定の部分だけにし、それでも超えれば新しいものから入れます。
  */
 export const RECORD_MAX_CHARS = 20000
@@ -26,8 +40,9 @@ export type SettledReply = {
 }
 
 /**
- * 回答固定形の決定の部分。質問票は見出しと `Qn.` の行、指摘の画面は見出しと対象、`## 指摘` の節、
- * `## 書き換え` の各項目の見出し行 (`前:` と `後:` の全文は外す) です。全体へのコメントと締めの文は外します。
+ * 回答固定形の決定の部分。質問票は見出しと `Qn.` の行と `## 表` (人が埋めた表も決定)、指摘の画面は見出しと対象、
+ * `## 指摘` の節、`## 書き換え` の各項目の見出し行 (`前:` と `後:` の全文は外す) です。
+ * 全体へのコメントと締めの文は外します。
  */
 export function decisionPartOf(text: string): string {
   const kept: string[] = []
@@ -38,12 +53,12 @@ export function decisionPartOf(text: string): string {
     }
     if (line.startsWith('## ')) {
       section = line
-      if (line === '## 指摘' || line === '## 書き換え') {
+      if (line === '## 表' || line === '## 指摘' || line === '## 書き換え') {
         kept.push(line)
       }
       continue
     }
-    if (section === '## 表' || section === '## 指摘した段落') {
+    if (section === '## 指摘した段落') {
       continue
     }
     if (section === '## 書き換え' && (line.startsWith('前: ') || line.startsWith('後: ') || line.startsWith('  '))) {
@@ -62,18 +77,24 @@ export function decisionPartOf(text: string): string {
  * 3. それでも収まらなければ新しいものから入れ、入らなかった回答はパスだけ書く。
  *
  * @param replies このセッションで届いた回答 (古い順)
- * @param waitingLabel 回答待ちの画面の label。あれば「届くまで対象の文書を書かない」を足す
+ * @param waiting 回答待ちの画面。あれば「届くまで対象の文書を書かない」と回答先の URL を足す
  * @param maxChars 上限 (テスト用)
  */
 export function buildDecisionRecord(
   replies: readonly SettledReply[],
-  waitingLabel: string | null,
+  waiting: WaitingSheet | null,
   maxChars: number = RECORD_MAX_CHARS,
 ): string | null {
   if (replies.length === 0) {
     return null
   }
-  const tail = waitingLabel === null ? [] : [`質問票 ${waitingLabel} は回答待ちです。回答が届くまで対象の文書を書きません。`]
+  const tail =
+    waiting === null
+      ? []
+      : [
+          `${waiting.kind === 'form' ? '質問票' : '指摘の画面'} ${waiting.label} は回答待ちです。回答が届くまで対象の文書を書きません。` +
+            `人には、回答先 ${waiting.url} で答えるか、/doc-desk で開き直すよう案内してください。`,
+        ]
   const compose = (bodies: readonly string[]): string => [RECORD_HEADING, ...bodies, ...tail].join('\n\n')
 
   const full = replies.map(reply => reply.text.replace(/\s+$/, ''))

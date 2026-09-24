@@ -4,7 +4,7 @@ import { parseAnswer } from './form/answer'
 import type { FormV1 } from './form/form-v1'
 import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
-import { buildDecisionRecord, type SettledReply } from './compact/record'
+import { buildDecisionRecord, isDecisionRecord, type SettledReply } from './compact/record'
 import type { Host } from './host'
 import {
   COMMAND_NAME,
@@ -996,7 +996,11 @@ export function register(on: On) {
         replies.push({ ...entry, text })
       }
     }
-    const record = buildDecisionRecord(replies, pending?.sheet.label ?? null)
+    const waiting = pending
+    const record = buildDecisionRecord(
+      replies,
+      waiting ? { kind: waiting.sheet.kind, label: waiting.sheet.label, url: waiting.url } : null,
+    )
     if (record === null) {
       return next(e)
     }
@@ -1006,8 +1010,10 @@ export function register(on: On) {
     if (result.skip !== undefined) {
       return result
     }
+    // 前の圧縮 (precompute を含む) で足した記録が残っていれば除いてから、新しい記録を 1 つだけ足す。
     // handle の無い message は「組み立てた文」として読まれる
-    return { ...result, messages: [...result.messages, { role: 'user' as const, text: record, toolUses: [] }] }
+    const kept = result.messages.filter(message => !isDecisionRecord(message.text))
+    return { ...result, messages: [...kept, { role: 'user' as const, text: record, toolUses: [] }] }
   })
 
   on('ui.close', { id: 'doc-desk' }, async ($, e, next) => {
