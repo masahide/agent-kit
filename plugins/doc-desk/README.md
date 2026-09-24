@@ -35,7 +35,7 @@ sequenceDiagram
     C->>M: tool.call open_form(質問票 JSON)
     M->>M: 検証 → ./doc-desk/<label>.json と .html を書く
     M->>R: $.process.run([python, receiver.py, start, ...]) (シェルは使わない)
-    M->>M: port-file を最大 3 秒ポーリングして port と pid を得る
+    R-->>M: stdout に {"port": n, "pid": n} を 1 行 (3 秒で listen できなければ空)
     M->>B: $.process.run([python, receiver.py, open, <url>])
     M->>M: $.ui.open(pane) で URL と状態を表示
     Note over M: $.clock.every(500ms) で回答ファイルを監視 (同期待ち中は経過秒数の更新だけ)
@@ -80,7 +80,7 @@ sequenceDiagram
 | `hooks/review/document.ts` | 文書の HTML の検査 (構成案と同じ要素、属性は表の colspan と rowspan だけ、10 万文字まで、段落が 1 つ以上) と、段落番号を振る要素 |
 | `hooks/review/answer.ts` | 指摘の回答 JSON の読み取り (`kind`、`documentId`、`revision` が違えば無視、形の違う指摘と添削は捨てる) |
 | `hooks/review/format.ts` | 指摘の回答 JSON → 回答固定形 (`## 指摘`、`## 指摘した段落`、`## 書き換え`) |
-| `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、port-file の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
+| `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、`start` が印字する 1 行の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
 | `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む (読み方は画面ごとに渡す) |
 | `hooks/views/pane-view.ts` | 待機中のペイン (Box / Text / Button / Link) |
 | `hooks/views/strings.ts` | 固定文言 |
@@ -100,7 +100,7 @@ sequenceDiagram
 | event | what the hook does |
 | --- | --- |
 | `session.start` | `$` を host に束ね、ツール `open_form` と `open_review` と `/doc-desk` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする |
-| `tool.call` of `mcp__doc-desk__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`doc-desk/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` と `.port.json` を `receiver.py clean` で消し、受信サーバを `receiver.py start` で切り離して起動して port-file を最大 3 秒待ち、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
+| `tool.call` of `mcp__doc-desk__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`doc-desk/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` を `receiver.py clean` で消し、受信サーバを `receiver.py start` で切り離して起動して stdout の 1 行から port と pid を読み、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
 | `tool.call` of `mcp__doc-desk__open_review` | `review` を検証し、`doc-desk/<label>.doc.html` を読んで検査する (無い、読めない、許可リストに無い要素や属性、10 万文字超、段落なし、のどれかなら `{ status: "invalid", errors }`)。`doc-desk/<label>.json` に `review` を、`.html` に指摘の画面を書き、あとは `open_form` と同じ (受信サーバ、同期待ち、監視、ペイン)。結果の `files` は `{ doc, review, html }` (`answered` では `answer` と `md` を足す) |
 | `command.run` of `doc-desk` | 待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。待機中でなければ「待機中の質問票も指摘の画面もありません」 |
 | `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
@@ -115,10 +115,10 @@ sequenceDiagram
 validate の印字:
 
 ```
-❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status
+❯ ./register.ts calls: $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status
 ```
 
-`clock.after` (port-file の待ち), `clock.every` (回答の監視), `clock.now`,
+`clock.every` (回答の監視), `clock.now`,
 `command.register`, `fs.exists`, `fs.read`, `fs.write`,
 `http.fetch` (同期待ちの `GET /wait?t=…&timeout=4`。127.0.0.1 の受信サーバへ),
 `process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
@@ -152,7 +152,6 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 | `doc-desk/<label>.json` | 質問票 (検証済み)。指摘の画面では `review` (検証済み) |
 | `doc-desk/<label>.doc.html` | 指摘の画面に出す文書の HTML (Claude が書き、Mod は読むだけで消さない) |
 | `doc-desk/<label>.html` | HTML シート (トークンは埋めない。ブラウザの JS が URL の `?t=` から読む) |
-| `doc-desk/<label>.port.json` | 受信サーバが書く `{"port": n, "pid": n}` |
 | `doc-desk/<label>.answer.json` | ブラウザが POST した回答 JSON (`open_form` は同じ label の前回のものを起動前に消す) |
 | `doc-desk/<label>.md` | 回答固定形 (Claude に送ったものと同じ) |
 
@@ -207,18 +206,20 @@ Windows では、エンジンが `$.fs` に渡したパスを `C:\work\doc-desk\
 受信サーバ単体:
 
 ```sh
-python3 plugins/doc-desk/scripts/receiver.py serve --port-file /tmp/x.port.json --token t \
-  --html doc-desk/spec-auth-01.html --out /tmp/x.answer.json          # 前面で動かす (start なら切り離してすぐ戻る)
+python3 plugins/doc-desk/scripts/receiver.py start --token t \
+  --html doc-desk/spec-auth-01.html --out /tmp/x.answer.json   # 切り離して起動し {"port": n, "pid": n} を 1 行出す (serve なら前面で動かす)
 curl "http://127.0.0.1:<port>/?t=t"                       # HTML (トークン無しは 403)
 curl "http://127.0.0.1:<port>/wait?t=t&timeout=4"          # 回答の POST か 4 秒まで保留 → {"answered":true|false}
 curl -X POST -d '{"answers":{}}' "http://127.0.0.1:<port>/answer?t=t"   # 書いて、保留中の /wait に応答してから終了
 python3 plugins/doc-desk/scripts/receiver.py stop <pid>        # 止める (もう無ければ何もしない)
-python3 plugins/doc-desk/scripts/receiver.py clean /tmp/x.answer.json /tmp/x.port.json   # 消す
+python3 plugins/doc-desk/scripts/receiver.py clean /tmp/x.answer.json   # 消す
 ```
 
 Windows で `python3` が Microsoft Store の案内に当たるときは、`python` か `py -3` に読み替えます (Mod もこの順に探します)。
 
-`<port>` は `/tmp/x.port.json` の `port` です。
+`<port>` と `<pid>` は `start` が出した 1 行の値です。`--port <n>` を足すとその port を使い、塞がっていれば OS に選ばせます。
+Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` で listen するので、使用中の port を横取りしません
+(2026-09-24 確認: 使用中の port を指定すると別の port になり、TIME_WAIT だけ残る port は取り直せる)。
 
 ## 実機で確かめていないこと (2026-09-23 時点)
 

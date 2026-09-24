@@ -56,8 +56,8 @@ describe('register', () => {
     const argv = receiverRuns[0] ?? []
     expect(argv[0], 'シェルを通さず python3 で receiver.py の start を呼ぶ').toBe('python3')
     expect(argv[1]).toMatch(/[\\/]scripts\/receiver\.py$/)
-    expect(argv.slice(2, 4)).toEqual(['start', '--port-file'])
-    expect(argv).toContain('--token')
+    expect(argv.slice(2, 4)).toEqual(['start', '--token'])
+    expect(argv, 'port-file は使わない').not.toContain('--port-file')
     expect(argv.slice(argv.indexOf('--html'), argv.indexOf('--html') + 2)).toEqual([
       '--html',
       '/work/doc-desk/spec-auth-01.html',
@@ -73,11 +73,13 @@ describe('register', () => {
     const cleanRuns = world.receiverCommandRuns('clean')
     expect(
       world.runs.indexOf(cleanRuns[0] ?? []),
-      '前回の回答と port-file を消す clean は受信サーバの起動より前',
+      '前回の回答を消す clean は受信サーバの起動より前',
     ).toBeLessThan(world.runs.indexOf(argv))
-    expect(cleanRuns.map(run => run.slice(2))).toEqual([
-      ['clean', '/work/doc-desk/spec-auth-01.answer.json', '/work/doc-desk/spec-auth-01.port.json'],
-    ])
+    expect(cleanRuns.map(run => run.slice(2))).toEqual([['clean', '/work/doc-desk/spec-auth-01.answer.json']])
+    expect(
+      [...world.files.keys()].some(path => path.endsWith('.port.json')),
+      'port-file は作らない',
+    ).toBe(false)
 
     expect(world.receiverCommandRuns('open'), 'openBrowser: false ではブラウザを開かない').toEqual([])
 
@@ -243,16 +245,12 @@ describe('register', () => {
 
     await $.session.start(Fixtures.SESSION)
     world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
-    world.files.set('/work/doc-desk/spec-auth-01.port.json', JSON.stringify({ port: 1, pid: 1 }))
 
     const answered = await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
     await world.clock.settle()
 
     expect(JSON.parse(answered.result as string).status).toBe('pending')
     expect(world.files.has(ANSWER_PATH), '古い回答ファイルは消えている').toBe(false)
-    expect(world.files.get('/work/doc-desk/spec-auth-01.port.json'), 'port-file は受信サーバが書き直したもの').toBe(
-      JSON.stringify({ port: Fixtures.RECEIVER_PORT, pid: Fixtures.RECEIVER_PID }),
-    )
 
     await world.clock.advance(1000)
     expect(world.submitted, '古い回答は届けない').toEqual([])
@@ -420,17 +418,16 @@ describe('register', () => {
     await ui.unmount()
   })
 
-  test('受信サーバが 3 秒以内に port-file を書かなければ failed を返す', async ($, on) => {
+  test('receiver.py start が port を返さなければ failed を返す', async ($, on) => {
     const world = Fixtures.world(on, { isReceiverUp: false })
 
     await $.session.start(Fixtures.SESSION)
 
-    const call = $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
-    await world.clock.advance(3000)
-    const result = JSON.parse((await call).result as string)
+    const answered = await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    const result = JSON.parse(answered.result as string)
 
     expect(result.status).toBe('failed')
-    expect(result.reason).toContain(STRINGS.noPortFile)
+    expect(result.reason).toContain(STRINGS.noPort)
     expect(result.reason).toContain('file://')
     expect(result.files.html).toBe('/work/doc-desk/spec-auth-01.html')
     expect(world.files.has('/work/doc-desk/spec-auth-01.html'), 'HTML は書いてある').toBe(true)

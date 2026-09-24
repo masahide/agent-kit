@@ -16,7 +16,7 @@ import {
   isPython3,
   linkUrlOf,
   openBrowserArgv,
-  parsePortFile,
+  parseStartOutput,
   PYTHON_CANDIDATES,
   receiverArgv,
   stopArgv,
@@ -45,18 +45,11 @@ const WATCH_INTERVAL_MS = 500
 const REDRAW_EVERY_TICKS = 10
 
 /**
- * port-file を待つ間隔と回数。250 ms × 12 = 3 秒。
- */
-const PORT_FILE_POLL_MS = 250
-const PORT_FILE_POLL_COUNT = 12
-
-/**
  * 証跡ファイルの置き場。`doc` は指摘の画面で Claude が書き出す文書の HTML です。
  */
 type Paths = {
   form: string
   html: string
-  portFile: string
   answer: string
   md: string
   doc: string
@@ -134,7 +127,6 @@ export function register(on: On) {
     return {
       form: `${base}.json`,
       html: `${base}.html`,
-      portFile: `${base}.port.json`,
       answer: `${base}.answer.json`,
       md: `${base}.md`,
       doc: `${base}.doc.html`,
@@ -162,29 +154,6 @@ export function register(on: On) {
       return null
     })()
     return pythonProbe
-  }
-
-  const wait = (engine: Host, ms: number): Promise<void> =>
-    new Promise(resolve => {
-      engine.after(ms, resolve)
-    })
-
-  /**
-   * port-file を 250 ms 間隔で最大 3 秒待って読みます。
-   */
-  async function readPortFile(engine: Host, path: string): Promise<ReceiverInfo | null> {
-    for (let attempt = 0; attempt < PORT_FILE_POLL_COUNT; attempt += 1) {
-      if (attempt > 0) {
-        await wait(engine, PORT_FILE_POLL_MS)
-      }
-      if (await engine.exists(path)) {
-        const info = parsePortFile(await engine.readFile(path).catch(() => ''))
-        if (info) {
-          return info
-        }
-      }
-    }
-    return null
   }
 
   function openBrowser(engine: Host, url: string) {
@@ -308,27 +277,20 @@ export function register(on: On) {
       return failed(STRINGS.noPython, sheet)
     }
 
-    // 同じ label の前回の回答と port-file を消す (残っていると古い回答を拾う)
-    await engine
-      .run(cleanupArgv(python, engine.pluginRoot, { out: paths.answer, portFile: paths.portFile }), { timeoutMs: 5000 })
-      .catch(() => undefined)
+    // 同じ label の前回の回答を消す (残っていると古い回答を拾う)
+    await engine.run(cleanupArgv(python, engine.pluginRoot, { out: paths.answer }), { timeoutMs: 5000 }).catch(() => undefined)
 
     const token = tokenOf(options.nowMs)
-    const argv = receiverArgv(
-      python,
-      { pluginRoot: engine.pluginRoot, html: paths.html, out: paths.answer, portFile: paths.portFile },
-      token,
-    )
+    const argv = receiverArgv(python, { pluginRoot: engine.pluginRoot, html: paths.html, out: paths.answer }, token)
 
+    let receiver: ReceiverInfo | null
     try {
-      await engine.run(argv, { timeoutMs: 10000 })
+      receiver = parseStartOutput((await engine.run(argv, { timeoutMs: 10000 })).stdout)
     } catch (error) {
       return failed(`受信サーバを起動できませんでした (${String(error)})`, sheet)
     }
-
-    const receiver = await readPortFile(engine, paths.portFile)
     if (!receiver) {
-      return failed(STRINGS.noPortFile, sheet)
+      return failed(STRINGS.noPort, sheet)
     }
 
     const url = urlOf(receiver.port, token)
@@ -408,7 +370,6 @@ export function register(on: On) {
 
     const engine: Host = {
       now: () => $.clock.now(),
-      after: (ms, fn) => $.clock.after(ms, fn),
       every: (ms, fn) => $.clock.every(ms, fn),
       run: (argv, init) => $.process.run(argv, init),
       writeFile: (path, text) => $.fs.write(path, text),

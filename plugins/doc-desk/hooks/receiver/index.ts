@@ -1,5 +1,5 @@
 /**
- * 受信サーバ (scripts/receiver.py) の起動引数と、port-file の読み取り、URL。
+ * 受信サーバ (scripts/receiver.py) の起動引数と、起動時に印字する 1 行の読み取り、URL。
  *
  * Mod はシェル (sh) を使わず、`<python> receiver.py <サブコマンド>` だけを `$.process.run` に渡します。
  * 背景での起動、ブラウザ、ファイルの削除、プロセスの停止の OS ごとの違いは receiver.py が吸収するので、
@@ -16,12 +16,10 @@ export type ReceiverPaths = {
   html: string
   /** 回答を書く先 (絶対) */
   out: string
-  /** `{"port": n, "pid": n}` を書く先 (絶対) */
-  portFile: string
 }
 
 /**
- * port-file の中身。
+ * `receiver.py start` が stdout に印字する 1 行の中身。
  */
 export type ReceiverInfo = {
   port: number
@@ -45,46 +43,54 @@ export const isPython3 = (result: { exitCode: number; stdout: string; stderr: st
 const scriptOf = (pluginRoot: string): string => `${pluginRoot}/scripts/receiver.py`
 
 /**
- * 受信サーバを起動する前に、同じ label の前回の回答ファイルと port-file を消す argv。
+ * 受信サーバを起動する前に、同じ label の前回の回答ファイルを消す argv。
  * 消さないと、同じ label を使い回したときに Mod が前回の回答を新しい回答として拾います。
  */
-export const cleanupArgv = (
-  python: readonly string[],
-  pluginRoot: string,
-  paths: Pick<ReceiverPaths, 'out' | 'portFile'>,
-): string[] => [...python, scriptOf(pluginRoot), 'clean', paths.out, paths.portFile]
+export const cleanupArgv = (python: readonly string[], pluginRoot: string, paths: Pick<ReceiverPaths, 'out'>): string[] => [
+  ...python,
+  scriptOf(pluginRoot),
+  'clean',
+  paths.out,
+]
 
 /**
  * 受信サーバを切り離して起動する argv。receiver.py の `start` が `serve` を背景に回し、
- * `started` を出してすぐ戻ります。
+ * `serve` が listen した port と pid を `{"port": n, "pid": n}` の 1 行で stdout に出して戻ります。
+ * 3 秒のうちに listen できなければ何も出しません。
  *
  * @param python Python 3 を起動する argv (`PYTHON_CANDIDATES` のどれか)
  * @param paths ファイルの置き場
  * @param token `?t=` で照合するトークン
+ * @param preferredPort 使いたい port。塞がっていれば receiver.py が OS に選ばせる
  * @returns `$.process.run` に渡す argv
  */
-export function receiverArgv(python: readonly string[], paths: ReceiverPaths, token: string): string[] {
+export function receiverArgv(
+  python: readonly string[],
+  paths: ReceiverPaths,
+  token: string,
+  preferredPort?: number,
+): string[] {
   return [
     ...python,
     scriptOf(paths.pluginRoot),
     'start',
-    '--port-file',
-    paths.portFile,
     '--token',
     token,
     '--html',
     paths.html,
     '--out',
     paths.out,
+    ...(preferredPort === undefined ? [] : ['--port', String(preferredPort)]),
   ]
 }
 
 /**
- * port-file の JSON を読みます。形が違えば null。
+ * `receiver.py start` の stdout を読みます。最初の空でない行が `{"port": n, "pid": n}` でなければ null。
  */
-export function parsePortFile(text: string): ReceiverInfo | null {
+export function parseStartOutput(stdout: string): ReceiverInfo | null {
+  const line = stdout.split(/\r?\n/).find(text => text.trim() !== '') ?? ''
   try {
-    const parsed: unknown = JSON.parse(text)
+    const parsed: unknown = JSON.parse(line)
     if (
       typeof parsed === 'object' &&
       parsed !== null &&

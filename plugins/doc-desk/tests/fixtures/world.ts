@@ -69,7 +69,7 @@ export type WaitReply = { answered: boolean } | 'error'
 export type PythonCommand = 'python3' | 'python' | 'py' | null
 
 export type WorldOptions = {
-  /** false なら受信サーバが port-file を書かない (起動失敗を模す) */
+  /** false なら receiver.py start が何も印字せずに終わる (起動失敗を模す) */
   isReceiverUp?: boolean
   /** `--version` に Python 3 と答えるコマンド。省略時は `python3` */
   python?: PythonCommand
@@ -95,7 +95,7 @@ export function receiverCommandOf(argv: readonly string[]): string | null {
  * Mod の下の世界を記憶で答えます: ファイルは Map、プロセスは台本、時計は mock.clock、
  * 受信サーバの `/wait` は `options.waitReply`。
  *
- * receiver.py の `start` を受けると、argv の `--port-file` のパスに port-file を置きます。
+ * receiver.py の `start` を受けると、stdout に `{"port": n, "pid": n}` を 1 行返します。
  * `clean <paths...>` は Map から消します。`open` と `stop` は記録するだけです。
  *
  * @param on テストの `on`
@@ -168,11 +168,10 @@ export function world(on: On, options: WorldOptions = {}) {
     }
 
     if (command === 'start') {
-      const portFile = e.argv[e.argv.indexOf('--port-file') + 1]
-      if (portFile !== undefined && options.isReceiverUp !== false) {
-        files.set(keyOf(portFile), JSON.stringify({ port: RECEIVER_PORT, pid: RECEIVER_PID }))
+      if (options.isReceiverUp === false) {
+        return { value: { exitCode: 1, stdout: '', stderr: '' } }
       }
-      return { value: { exitCode: 0, stdout: 'started\n', stderr: '' } }
+      return { value: { exitCode: 0, stdout: `${JSON.stringify({ port: RECEIVER_PORT, pid: RECEIVER_PID })}\n`, stderr: '' } }
     }
 
     return { value: { exitCode: 0, stdout: '', stderr: '' } }

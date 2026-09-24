@@ -259,6 +259,17 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 
 受信サーバのプロトタイプは `spikes/mods-spike/scripts/receiver.py` と `form.html` でした (コミット `e9dd2ca` の履歴にあります)。トークン無しの GET は 403、POST 1 件でファイルに書いて自動終了します。
 
+## 5. ライフサイクル拡張の記録
+
+[lifecycle-plan.md](lifecycle-plan.md) の段階を終えるごとに、決めたことと実機で確かめたことを 1 節ずつ足します。
+
+### 段階 0: 受信サーバの起動を単純にする (2026-09-24)
+
+- `receiver.py start` は `serve` の stdout だけを pipe で受け、`serve` が listen 直後に出す `{"port": n, "pid": n}` の 1 行を写して終わります。3 秒で 1 行来なければ `serve` を止め、何も出さずに終了コード 1 で終わります。Mod はこれを `failed` (受信サーバが port を返しませんでした) にします。port-file と、それを待つ `$.clock.after` の polling は消しました。
+- `serve` は 1 行書いたら `sys.stdout.close()` に加えて `os.close(1)` をします。Python の標準出力は `closefd=False` で開かれているので、前者だけでは pipe が閉じず、`start` の読み取りが終わりません。
+- Windows で `DETACHED_PROCESS` の子に `stdout=PIPE` を渡して 1 行読めることを確かめました (Python 3.14.2、`start` は 0.23 秒で戻った)。
+- `serve --port <n>` を足しました (段階 1 で使う)。Windows の `SO_REUSEADDR` は使用中の port も取れてしまい、実際に同じ port で 2 つ目の受信サーバが起動しました。そこで Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` を付けます。付けたあとは、使用中の port を指定すると別の port になり、TIME_WAIT だけが残る port は取り直せました。
+
 ## 付録 A. 根拠にした一次情報
 
 | 資料 | 所在 | 使った箇所 |

@@ -5,11 +5,11 @@ Mod はシェル (sh) を使わず、このスクリプトのサブコマンド�
 OS ごとの違い (背景での起動、ブラウザ、ファイルの削除、プロセスの停止) はここで吸収し、
 macOS、Linux、Windows で同じ argv のまま動かします。
 
-  start --port-file P --token T --html H --out O   serve を切り離して起動し、started を出してすぐ終わる
-  serve --port-file P --token T --html H --out O   受信サーバを前面で動かす (start が使う)
-  open URL                                         既定のブラウザで URL を開く
-  clean PATH...                                    ファイルを消す (無いものは飛ばす)
-  stop PID                                         受信サーバを止める (もう無ければ何もしない)
+  start --token T --html H --out O [--port N]   serve を切り離して起動し、{"port": n, "pid": n} を 1 行出して終わる
+  serve --token T --html H --out O [--port N]   受信サーバを前面で動かす (start が使う)
+  open URL                                      既定のブラウザで URL を開く
+  clean PATH...                                 ファイルを消す (無いものは飛ばす)
+  stop PID                                      受信サーバを止める (もう無ければ何もしない)
 
 受信サーバは HTML シートを配り、/answer への POST を 1 件ファイルに書いて終了します。
 python3 の標準ライブラリだけを使い、127.0.0.1 にだけ bind します。ログは出しません。
@@ -24,14 +24,16 @@ python3 の標準ライブラリだけを使い、127.0.0.1 にだけ bind し�
   それ以外      -> 404
 
 /wait と POST を同時に捌くため ThreadingHTTPServer を使います。
---port-file には {"port": n, "pid": n} を JSON で書きます (tmp に書いて os.replace)。
+serve は listen した直後に {"port": n, "pid": n} を stdout に 1 行書いて stdout を閉じ、以後は何も書きません。
+start はその 1 行を読んで自分の stdout に写して終わります (Mod はこの 1 行で URL を組みます)。
 IDLE_TIMEOUT_SECONDS 秒のあいだ回答が無ければ終了します (保留中の /wait には {"answered":false} を返します)。
-ポートは OS に選ばせます。
+ポートは --port があればそれを使い、塞がっていれば (または無ければ) OS に選ばせます。
 """
 import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -45,6 +47,9 @@ WAIT_TIMEOUT_MAX = 5.0
 # 回答が無いまま受信サーバが待つ上限 (秒)。
 IDLE_TIMEOUT_SECONDS = 3600
 
+# start が serve の 1 行を待つ上限 (秒)。超えたら serve を止め、何も出さずに終わる。
+START_TIMEOUT_SECONDS = 3.0
+
 IS_WINDOWS = os.name == 'nt'
 
 
@@ -53,10 +58,10 @@ def parse_args(argv):
     commands = parser.add_subparsers(dest='command', required=True)
     for name, help_text in (('start', '受信サーバを切り離して起動する'), ('serve', '受信サーバを前面で動かす')):
         command = commands.add_parser(name, help=help_text)
-        command.add_argument('--port-file', required=True, help='{"port": n, "pid": n} を書くパス')
         command.add_argument('--token', required=True, help='?t= で照合するトークン')
         command.add_argument('--html', required=True, help='配る HTML のパス')
         command.add_argument('--out', required=True, help='回答 JSON を書くパス')
+        command.add_argument('--port', type=int, default=0, help='使いたい port (塞がっていれば OS に選ばせる)')
     commands.add_parser('open', help='既定のブラウザで URL を開く').add_argument('url')
     commands.add_parser('clean', help='ファイルを消す').add_argument('paths', nargs='+')
     commands.add_parser('stop', help='受信サーバを止める').add_argument('pid', type=int)
@@ -95,27 +100,45 @@ def detached_options():
 
 
 def start(args):
-    """serve を切り離して起動し、started を出してすぐ終わる (sh -c "nohup ... &" の代わり)。"""
+    """serve を切り離して起動し、serve が出す {"port": n, "pid": n} の 1 行を写して終わる。
+
+    serve の stdout だけを pipe で受けます (stdin と stderr は DEVNULL)。serve は 1 行書いたら
+    stdout を閉じるので、start が先に終わっても serve は書き込みで止まりません。
+    START_TIMEOUT_SECONDS 秒のうちに 1 行来なければ serve を止め、何も出さずに終わります
+    (Mod はこれを受信サーバの起動失敗として扱います)。
+    """
     command = [
         sys.executable,
         os.path.abspath(__file__),
         'serve',
-        '--port-file', args.port_file,
         '--token', args.token,
         '--html', args.html,
         '--out', args.out,
+        '--port', str(args.port),
     ]
-    options = detached_options()
+    options = {**detached_options(), 'stdout': subprocess.PIPE}
     if IS_WINDOWS:
         # 親がジョブで子をまとめて止める設定でも残るよう、まずジョブから外して起動する。
         # ジョブが外すことを許していなければ OSError になるので、外さずに起動し直す
         try:
-            subprocess.Popen(command, **{**options, 'creationflags': options['creationflags'] | subprocess.CREATE_BREAKAWAY_FROM_JOB})
+            child = subprocess.Popen(command, **{**options, 'creationflags': options['creationflags'] | subprocess.CREATE_BREAKAWAY_FROM_JOB})
         except OSError:
-            subprocess.Popen(command, **options)
+            child = subprocess.Popen(command, **options)
     else:
-        subprocess.Popen(command, **options)
-    print('started')
+        child = subprocess.Popen(command, **options)
+
+    lines = []
+    reader = threading.Thread(target=lambda: lines.append(child.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(START_TIMEOUT_SECONDS)
+    line = lines[0].decode('utf-8', 'replace').strip() if lines else ''
+    if not line:
+        try:
+            child.kill()
+        except OSError:
+            pass
+        return 1
+    print(line, flush=True)
     return 0
 
 
@@ -147,6 +170,30 @@ def stop(pid):
     except (ProcessLookupError, PermissionError, OSError):
         pass
     return 0
+
+
+def bind_server(server_class, handler, port):
+    """127.0.0.1 の port で listen する。port が 0 か塞がっていれば OS に選ばせる。"""
+    if port > 0:
+        try:
+            return server_class(('127.0.0.1', port), handler)
+        except OSError:
+            pass
+    return server_class(('127.0.0.1', 0), handler)
+
+
+def announce(line):
+    """1 行を stdout に書いて stdout を閉じる。以後 stdout には何も書かない。
+
+    sys.stdout.close() は fd 1 を閉じない (closefd=False) ので、fd も閉じて start の読み取りを終わらせます。
+    """
+    sys.stdout.write(line + '\n')
+    sys.stdout.flush()
+    sys.stdout.close()
+    try:
+        os.close(1)
+    except OSError:
+        pass
 
 
 def serve(args):
@@ -215,10 +262,18 @@ def serve(args):
         # 応答中の /wait スレッドを終了時に待つ (daemon にすると応答前に切られる)。
         # server_close は block_on_close (既定 True) で全スレッドの終了を待つ
         daemon_threads = False
+        # Windows の SO_REUSEADDR は使用中の port も取れてしまう (--port で他のサーバを乗っ取る) ので、
+        # Windows では付けずに SO_EXCLUSIVEADDRUSE を付ける。POSIX は TIME_WAIT の port を取り直すために付ける
+        allow_reuse_address = not IS_WINDOWS
 
-    server = Server(('127.0.0.1', 0), Handler)
+        def server_bind(self):
+            if IS_WINDOWS:
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+    server =bind_server(Server, Handler, args.port)
     port = server.server_address[1]
-    write_atomically(args.port_file, json.dumps({'port': port, 'pid': os.getpid()}))
+    announce(json.dumps({'port': port, 'pid': os.getpid()}))
 
     timer = threading.Timer(IDLE_TIMEOUT_SECONDS, server.shutdown)
     timer.daemon = True

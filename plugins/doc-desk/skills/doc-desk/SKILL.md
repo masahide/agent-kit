@@ -73,7 +73,6 @@ Mod はセッションの作業ディレクトリの下 `doc-desk/` に、質問
 | `doc-desk/<label>.json` | 検証済みの質問票 (指摘の画面では検証済みの `review`) | Mod |
 | `doc-desk/<label>.doc.html` | 指摘の画面に出す文書の HTML (指摘モードだけ) | Claude |
 | `doc-desk/<label>.html` | 自己完結の HTML シート (`file://` でも開ける) | Mod |
-| `doc-desk/<label>.port.json` | 受信サーバの `{"port", "pid"}` | 受信サーバ |
 | `doc-desk/<label>.answer.json` | ブラウザが送った回答 JSON (同じ label の前回のものは `open_form` が起動前に消す) | 受信サーバ |
 | `doc-desk/<label>.md` | 回答固定形 (`reply` または user turn として届いたものと同じ。末尾に改行 1 つ) | Mod (`failed` で人が回答 JSON を貼ったときは Claude) |
 
