@@ -173,11 +173,11 @@ def stop(pid):
 
 
 def bind_server(server_class, handler, port):
-    """127.0.0.1 の port で listen する。port が 0 か塞がっていれば OS に選ばせる。"""
-    if port > 0:
+    """127.0.0.1 の port で listen する。port が 0、範囲外 (1〜65535 でない)、塞がっているなら OS に選ばせる。"""
+    if 0 < port < 65536:
         try:
             return server_class(('127.0.0.1', port), handler)
-        except OSError:
+        except (OSError, OverflowError):
             pass
     return server_class(('127.0.0.1', 0), handler)
 

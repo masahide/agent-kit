@@ -11,6 +11,7 @@ export type ReplySummary = {
 }
 
 const FORM_LINE = /^Q(\d+)\. .*?: (?:(\S+) — |\(未選択 = お任せ\))/
+const GLOBAL_NOTE = '全体へのコメント: '
 const REVIEW_TARGET = /^対象: \S+/
 const REVIEW_COMMENT = /^#\d+( |$)/
 const REVIEW_EDIT = /^#\d+ (?:書き換え|削除|移動|の後に追加)/
@@ -34,14 +35,15 @@ export function summarizeReply(text: string): ReplySummary | null {
   if (documentId === '' || !lines.includes('---')) {
     return null
   }
-  const hasGlobalNote = lines.some(line => line.startsWith('全体へのコメント: '))
+  const hasGlobalNote = lines.some(line => line.startsWith(GLOBAL_NOTE))
 
   if (REVIEW_TARGET.test(lines[1] ?? '')) {
     let section = ''
     let comments = 0
     let edits = 0
     for (const line of lines.slice(2)) {
-      if (line === '---') {
+      // 全体へのコメントは人の自由記述 (複数行あり得る) なので、その中の行は数えない
+      if (line === '---' || line.startsWith(GLOBAL_NOTE)) {
         break
       }
       if (line.startsWith('## ')) {
@@ -67,7 +69,8 @@ export function summarizeReply(text: string): ReplySummary | null {
   const picks: string[] = []
   let notes = hasGlobalNote ? 1 : 0
   for (const line of lines.slice(1)) {
-    if (line.startsWith('## ') || line === '---') {
+    // 表の無い質問票では、問いの行のすぐ後に全体へのコメントが来る
+    if (line.startsWith('## ') || line === '---' || line.startsWith(GLOBAL_NOTE)) {
       break
     }
     const match = FORM_LINE.exec(line)
