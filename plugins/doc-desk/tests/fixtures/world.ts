@@ -75,6 +75,8 @@ export type WorldOptions = {
   python?: PythonCommand
   /** `GET /wait` の答え。省略時は毎回 `{ answered: false }` (timeout まで回答が無かった) */
   waitReply?: (call: WaitCall) => WaitReply | Promise<WaitReply>
+  /** `$.store` の初めの中身 (前のセッションが残した記録を模す) */
+  store?: Record<string, unknown>
 }
 
 /**
@@ -113,6 +115,9 @@ export function world(on: On, options: WorldOptions = {}) {
   const registeredTools: string[] = []
   const registeredCommands: string[] = []
   const fetched: WaitCall[] = []
+  const store = new Map<string, unknown>(Object.entries(options.store ?? {}))
+  const toasts: string[] = []
+  const suggested: string[] = []
   let invalidations = 0
 
   const clock = mock.clock(on, { now: Date.UTC(2026, 8, 22, 12, 0, 0) })
@@ -140,6 +145,18 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   on('fs.exists', ($, e) => ({ value: files.has(keyOf(e.path)) }))
+
+  on('store.get', ($, e) => ({ value: store.get(e.key) }))
+
+  on('store.set', ($, e) => {
+    store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+    return { value: undefined }
+  })
+
+  on('store.delete', ($, e) => {
+    store.delete(e.key)
+    return { value: undefined }
+  })
 
   on('process.run', ($, e) => {
     runs.push(e.argv)
@@ -179,6 +196,7 @@ export function world(on: On, options: WorldOptions = {}) {
 
   on('http.fetch', async ($, e) => {
     const timeout = /[?&]timeout=(\d+)/.exec(e.url)?.[1]
+    // 引き継ぎの生死確認 (timeout=0) も /wait として数える
     const call: WaitCall = { url: e.url, timeoutSeconds: Number(timeout ?? 0), count: fetched.length + 1 }
     fetched.push(call)
     const reply = await (options.waitReply ?? (() => ({ answered: false })))(call)
@@ -218,6 +236,16 @@ export function world(on: On, options: WorldOptions = {}) {
     return { text: e.text, ...(e.context && { context: e.context }) }
   })
 
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+
+  on('prompt.suggest', ($, e) => {
+    suggested.push(e.text)
+    return { isShown: true }
+  })
+
   return {
     files,
     runs,
@@ -227,6 +255,9 @@ export function world(on: On, options: WorldOptions = {}) {
     statuses,
     submitted,
     fetched,
+    store,
+    toasts,
+    suggested,
     registeredTools,
     registeredCommands,
     clock,

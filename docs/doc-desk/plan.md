@@ -270,6 +270,14 @@ V7 の補足: 3 章の決定 Q3 の「JSON を隠し context に添える」は�
 - Windows で `DETACHED_PROCESS` の子に `stdout=PIPE` を渡して 1 行読めることを確かめました (Python 3.14.2、`start` は 0.23 秒で戻った)。
 - `serve --port <n>` を足しました (段階 1 で使う)。Windows の `SO_REUSEADDR` は使用中の port も取れてしまい、実際に同じ port で 2 つ目の受信サーバが起動しました。そこで Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` を付けます。付けたあとは、使用中の port を指定すると別の port になり、TIME_WAIT だけが残る port は取り直せました。
 
+### 段階 1: 未回答の引き継ぎ (2026-09-24)
+
+- 待機を始めた時点で `$.store` の `pending:<cwd>` に記録を書き、回答が届くか取り消すと消します。計画どおり `session.end` は使いません。
+- 起動時に回答が届いていて人がいるときは、記録を `/doc-desk` で送るまで残します。人が `/doc-desk` を打たずにまた閉じても、次の起動で同じ案内が出ます。
+- `command.run` の中で `$.prompt.submit` を呼ぶと、エンジンが「このフックが握っている turn を待つことになる」として拒みました (テストキットの host check)。`/doc-desk` は `$.clock.after(0)` でコマンドが終わった後に送ります。これで段階 0 で消した `$.clock.after` が、別の役目で戻りました。`session.start` の中の `$.prompt.submit` は拒まれないので、`-p` と SDK では待たずに (`void`) 呼びます。
+- 受信サーバの生死は `GET /wait?timeout=0` で見ます。`$.http.fetch` に時間の上限を渡す欄は無いので、死んでいるときは接続拒否ですぐ失敗することを当てにしています。
+- 実機で確かめていないこと: `session.start` の中の `$.ui.toast`、`$.ui.log` の見え方と、起動直後の `$.prompt.suggest` が薄い候補として出るか。テストキットでは通っています。
+
 ## 付録 A. 根拠にした一次情報
 
 | 資料 | 所在 | 使った箇所 |

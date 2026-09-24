@@ -65,6 +65,7 @@ sequenceDiagram
 | --- | --- |
 | `hooks/register.ts` | フックの登録と状態機械 (idle → waiting → submitting → idle) |
 | `hooks/host/index.ts` | `session.start` で `$` を束ねた関数群の型 |
+| `hooks/store/pending-record.ts` | `$.store` に残す待機の記録の型、読み取り、古さの判定 (7 日) |
 | `hooks/names.ts` | plugin 名、ツール名、コマンド名、ペイン id、見出し語 |
 | `hooks/form/form-v1.ts` | 質問票 JSON スキーマ v1 と回答 JSON の型 |
 | `hooks/form/validate.ts` | 質問票の検証 (エラーを全部返す) |
@@ -99,14 +100,24 @@ sequenceDiagram
 
 | event | what the hook does |
 | --- | --- |
-| `session.start` | `$` を host に束ね、ツール `open_form` と `open_review` と `/doc-desk` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする |
+| `session.start` | `$` を host に束ね、ツール `open_form` と `open_review` と `/doc-desk` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする。続けて `$.store` の `pending:<cwd>` に前のセッションの待機の記録があれば引き継ぐ (下の「引き継ぎ」) |
 | `tool.call` of `mcp__doc-desk__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`doc-desk/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` を `receiver.py clean` で消し、受信サーバを `receiver.py start` で切り離して起動して stdout の 1 行から port と pid を読み、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
 | `tool.call` of `mcp__doc-desk__open_review` | `review` を検証し、`doc-desk/<label>.doc.html` を読んで検査する (無い、読めない、許可リストに無い要素や属性、10 万文字超、段落なし、のどれかなら `{ status: "invalid", errors }`)。`doc-desk/<label>.json` に `review` を、`.html` に指摘の画面を書き、あとは `open_form` と同じ (受信サーバ、同期待ち、監視、ペイン)。結果の `files` は `{ doc, review, html }` (`answered` では `answer` と `md` を足す) |
-| `command.run` of `doc-desk` | 待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。待機中でなければ「待機中の質問票も指摘の画面もありません」 |
+| `command.run` of `doc-desk` | 起動時に見つけた回答が未送なら、`$.clock.after(0)` で回答固定形を `$.prompt.submit` する (`command.run` の中の `prompt.submit` はエンジンが拒むため)。そうでなく待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。どちらでもなければ「待機中の質問票も指摘の画面もありません」 |
 | `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
 | `ui.close` of `doc-desk` | 人が閉じても監視は続け、状態行に「/doc-desk で開き直せます」を出す |
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
+
+引き継ぎ: 待機を始めると `$.store` の `pending:<cwd>` に `{ kind, label, documentId, revision, token, port, pid, startedAtMs }` を書き、回答が届くか取り消すと消します (`$.store` は plugin ごとに 1 つで、プロジェクトをまたいで共有されるので cwd をキーに含めます)。次の `session.start` では、記録を次の順に見ます。
+
+| 状態 | すること |
+| --- | --- |
+| 記録が 7 日より古い | 記録を消し、`$.ui.log` で伝える |
+| `doc-desk/<label>.json` が無い、検証を通らない、版が違う | 記録を消す |
+| `.answer.json` がある | 固定形を `.md` に書く。`e.surface` が null (`-p`、SDK) なら `$.prompt.submit` で届けて記録を消す。人がいれば `$.ui.log` と `$.ui.toast` で知らせ、`$.prompt.suggest` で `/doc-desk` を候補に出し、記録は `/doc-desk` で送るまで残す |
+| 受信サーバが生きている (`GET /wait?timeout=0` が `{"answered":false}`) | 監視を再開する。ブラウザもペインも開かず、`$.ui.status` に「前回の質問票 <label> が未回答です」を出す |
+| 受信サーバが死んでいる | 同じ token と `--port <記録の port>` で `receiver.py start` を呼び、監視を再開する。port が変わったら新しい URL を `$.ui.log` で伝える。`.html` が消えていれば書き直す |
 
 回答 JSON は user turn の隠し context には添えません。Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないため (実測、plan.md 4 章 V7)、回答 JSON は `doc-desk/<label>.answer.json` を読んで照合します。
 
@@ -115,15 +126,17 @@ sequenceDiagram
 validate の印字:
 
 ```
-❯ ./register.ts calls: $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status
+❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.prompt.suggest, $.store.delete, $.store.get, $.store.set, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
 ```
 
-`clock.every` (回答の監視), `clock.now`,
+`clock.after` (`/doc-desk` の後に未送の回答を送る), `clock.every` (回答の監視), `clock.now`,
 `command.register`, `fs.exists`, `fs.read`, `fs.write`,
-`http.fetch` (同期待ちの `GET /wait?t=…&timeout=4`。127.0.0.1 の受信サーバへ),
+`http.fetch` (同期待ちの `GET /wait?t=…&timeout=4` と、引き継ぎの生死確認 `timeout=0`。127.0.0.1 の受信サーバへ),
 `process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
-`prompt.submit`, `tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`。
-`$.plugin.root` も読みます (呼び出しではないので印字されません)。`model`, `store` は使いません。
+`prompt.submit`, `prompt.suggest` (起動時に届いていた回答を送る `/doc-desk` を候補に出す),
+`store.get` / `store.set` / `store.delete` (待機の記録 `pending:<cwd>`),
+`tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`, `ui.toast`。
+`$.plugin.root` も読みます (呼び出しではないので印字されません)。`model` は使いません。
 
 `$.process.run` は型定義で「CLI only」とされています。ここでの CLI は、ローカルで動く Claude Code のプロセスを指すと
 読んでいます。Claude Code Desktop もローカルの Claude Code を動かすので、受信サーバの起動、ブラウザを開く、停止、削除は
@@ -226,3 +239,4 @@ Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` で listen す�
 - Esc で中断したあと、保留中の `/wait` が戻ってから `pending` を返すまでが `lingerMs` (5 秒) に収まるか。
 - ペインの `Link` (`http://localhost:<port>`) を押したとき、ブラウザが 127.0.0.1 の受信サーバに届くか (`::1` に解決されたときの切り替え。curl では届く)。
 - `waitSeconds` の既定 300 秒の間、ツール呼び出しが進行中のままで、表示や他のフックに問題が出ないか。
+- 引き継ぎ (2026-09-24 時点): `session.start` の中で出した `$.ui.toast` と `$.ui.log` が、terminal と Desktop で見えるか。`$.prompt.suggest` の `/doc-desk` が起動直後のプロンプト欄に薄い候補として出るか (エンジン自身の候補に上書きされないか)。テストキットでは通っています。

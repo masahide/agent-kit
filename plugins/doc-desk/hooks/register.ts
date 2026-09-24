@@ -1,6 +1,7 @@
 import type { On, Timer } from 'claude-code'
 
 import { parseAnswer } from './form/answer'
+import type { FormV1 } from './form/form-v1'
 import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
 import type { Host } from './host'
@@ -21,15 +22,18 @@ import {
   receiverArgv,
   stopArgv,
   urlOf,
+  waitUrlOf,
   type ReceiverInfo,
 } from './receiver'
 import { formatReply } from './reply/format'
 import { parseReviewAnswer } from './review/answer'
 import { documentErrors } from './review/document'
 import { formatReviewReply } from './review/format'
+import type { ReviewV1 } from './review/review-v1'
 import { validateReview } from './review/validate-review'
 import { renderHtml } from './sheet/render-html'
 import { renderReviewHtml } from './sheet/render-review'
+import { isStale, parsePendingRecord, recordKeyOf, type PendingRecord } from './store/pending-record'
 import { paneView } from './views/pane-view'
 import { STRINGS } from './views/strings'
 import { clampWaitSeconds, waitForAnswer } from './wait/sync-wait'
@@ -64,6 +68,7 @@ type DropReason = 'cancelled' | 'replaced'
  * 人に出す画面 1 つ分。質問票 (`open_form`) と指摘の画面 (`open_review`) の違いはここに閉じ込めます。
  */
 type Sheet = {
+  kind: PendingRecord['kind']
   documentId: string
   revision: number
   label: string
@@ -85,6 +90,7 @@ type Sheet = {
 type Pending = {
   sheet: Sheet
   receiver: ReceiverInfo
+  token: string
   url: string
   linkUrl: string
   startedAtMs: number
@@ -96,6 +102,58 @@ type Pending = {
   /** `dropPending` で片付けられたときの理由 */
   dropReason: DropReason | null
 }
+
+/**
+ * 起動時に見つけた、まだ Claude に送っていない回答。`/doc-desk` で送ります。
+ */
+type Unsent = {
+  sheet: Sheet
+  reply: string
+}
+
+/**
+ * 質問票の画面を組みます。
+ */
+function sheetOfForm(form: FormV1, paths: Paths): Sheet {
+  return {
+    kind: 'form',
+    documentId: form.documentId,
+    revision: form.revision,
+    label: form.label,
+    heading: STRINGS.headerOf(form.label, form.revision),
+    paths,
+    replyOf: text => {
+      const answer = parseAnswer(text, form)
+      return answer ? formatReply(form, answer) : null
+    },
+    files: { form: paths.form, html: paths.html },
+    answeredContext: STRINGS.answeredContext,
+    pendingContext: STRINGS.toolContext,
+  }
+}
+
+/**
+ * 指摘の画面を組みます。
+ */
+function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
+  return {
+    kind: 'review',
+    documentId: review.documentId,
+    revision: review.revision,
+    label: review.label,
+    heading: STRINGS.reviewHeaderOf(review.label, review.revision),
+    paths,
+    replyOf: text => {
+      const answer = parseReviewAnswer(text, review)
+      return answer ? formatReviewReply(review, answer) : null
+    },
+    files: { doc: paths.doc, review: paths.form, html: paths.html },
+    answeredContext: STRINGS.reviewAnsweredContext,
+    pendingContext: STRINGS.reviewPendingContext,
+  }
+}
+
+const dateOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10)
 
 /**
  * doc-desk Mod のフックを登録します。
@@ -112,6 +170,16 @@ type Pending = {
  * waiting --/doc-desk--> ペインとブラウザを開き直す
  * ```
  *
+ * 待機は `$.store` の `pending:<cwd>` にも記録し、次の `session.start` で引き継ぎます:
+ *
+ * ```
+ * 記録あり + 回答ファイルあり --人がいる--> unsent (/doc-desk で送る)
+ *                             ---p / SDK--> prompt.submit で届ける
+ * 記録あり + 受信サーバが生きている --> waiting(async) (ブラウザもペインも開かない)
+ * 記録あり + 受信サーバが死んでいる --> 同じ port と token で起動し直して waiting(async)
+ * 記録が古い (7 日超) / 証跡が無い --> 記録を消す
+ * ```
+ *
  * @param on エンジンの登録関数
  */
 export function register(on: On) {
@@ -119,6 +187,7 @@ export function register(on: On) {
   let cwd = ''
   let pythonProbe: Promise<readonly string[] | null> | null = null
   let pending: Pending | null = null
+  let unsent: Unsent | null = null
   let isPaneOpen = false
   let elapsedSeconds = 0
 
@@ -156,6 +225,27 @@ export function register(on: On) {
     return pythonProbe
   }
 
+  /**
+   * 待機を `$.store` に記録します (次の `session.start` で引き継ぐため)。書けなくても待機は続けます。
+   */
+  async function saveRecord(engine: Host, current: Pending) {
+    const record: PendingRecord = {
+      kind: current.sheet.kind,
+      label: current.sheet.label,
+      documentId: current.sheet.documentId,
+      revision: current.sheet.revision,
+      token: current.token,
+      port: current.receiver.port,
+      pid: current.receiver.pid,
+      startedAtMs: current.startedAtMs,
+    }
+    await engine.storeSet(recordKeyOf(cwd), record).catch(() => undefined)
+  }
+
+  async function forgetRecord(engine: Host) {
+    await engine.storeDelete(recordKeyOf(cwd)).catch(() => undefined)
+  }
+
   function openBrowser(engine: Host, url: string) {
     void pythonOf(engine)
       .then(python => python && engine.run(openBrowserArgv(python, engine.pluginRoot, url), { timeoutMs: 10000 }))
@@ -178,7 +268,7 @@ export function register(on: On) {
   }
 
   /**
-   * 待機中の画面を片付けます: 受信サーバを止め、監視を止め、ペインを閉じます。
+   * 待機中の画面を片付けます: 受信サーバを止め、監視を止め、ペインを閉じ、記録を消します。
    * 同期待ちの最中なら、次の周回で `dropReason` を見て `cancelled` を返します。
    */
   async function dropPending(engine: Host, reason: DropReason) {
@@ -190,6 +280,7 @@ export function register(on: On) {
     current.dropReason = reason
     current.timer.cancel()
     engine.status(undefined)
+    await forgetRecord(engine)
     const python = await pythonOf(engine)
     if (python) {
       await engine
@@ -200,14 +291,25 @@ export function register(on: On) {
   }
 
   /**
-   * 回答固定形を `<label>.md` に書き、ペインを閉じます。
+   * 回答固定形を `<label>.md` に書き、ペインを閉じ、記録を消します。
    * 同期経路はこの文を Tool result で、非同期経路は `prompt.submit` で Claude に届けます。
    */
   async function settle(engine: Host, sheet: Sheet, reply: string) {
     await engine.writeFile(sheet.paths.md, `${reply}\n`)
     engine.status(undefined)
+    await forgetRecord(engine)
     await closePane(engine)
     engine.uiLog(STRINGS.receivedOf(sheet.paths.md))
+  }
+
+  /**
+   * 回答ファイルがあり、この画面の回答として読めれば回答固定形を返します。
+   */
+  async function readReply(engine: Host, sheet: Sheet): Promise<string | null> {
+    if (!(await engine.exists(sheet.paths.answer))) {
+      return null
+    }
+    return sheet.replyOf(await engine.readFile(sheet.paths.answer).catch(() => ''))
   }
 
   /**
@@ -230,10 +332,10 @@ export function register(on: On) {
         }
       }
 
-      if (current.isSyncWaiting || !(await engine.exists(current.sheet.paths.answer))) {
+      if (current.isSyncWaiting) {
         return
       }
-      const reply = current.sheet.replyOf(await engine.readFile(current.sheet.paths.answer))
+      const reply = await readReply(engine, current.sheet)
       if (reply === null || pending !== current || current.isSyncWaiting) {
         return
       }
@@ -249,6 +351,57 @@ export function register(on: On) {
       .finally(() => {
         current.isChecking = false
       })
+  }
+
+  /**
+   * 受信サーバを起動します。起動できなければ理由の文を返します。
+   *
+   * @param preferredPort 使いたい port (引き継ぎで起動し直すとき)。塞がっていれば receiver.py が選び直す
+   */
+  async function startReceiver(
+    engine: Host,
+    python: readonly string[],
+    sheet: Sheet,
+    token: string,
+    preferredPort?: number,
+  ): Promise<ReceiverInfo | string> {
+    const { paths } = sheet
+    const argv = receiverArgv(python, { pluginRoot: engine.pluginRoot, html: paths.html, out: paths.answer }, token, preferredPort)
+    try {
+      return parseStartOutput((await engine.run(argv, { timeoutMs: 10000 })).stdout) ?? STRINGS.noPort
+    } catch (error) {
+      return `受信サーバを起動できませんでした (${String(error)})`
+    }
+  }
+
+  /**
+   * 待機を組みます: `pending` を置き、回答ファイルの監視を始め、記録を書きます。
+   * ブラウザとペインは開きません (呼ぶ側が決めます)。
+   */
+  async function armPending(
+    engine: Host,
+    sheet: Sheet,
+    receiver: ReceiverInfo,
+    options: { token: string; startedAtMs: number; isSyncWaiting: boolean },
+  ): Promise<Pending> {
+    const current: Pending = {
+      sheet,
+      receiver,
+      token: options.token,
+      url: urlOf(receiver.port, options.token),
+      linkUrl: linkUrlOf(receiver.port, options.token),
+      startedAtMs: options.startedAtMs,
+      timer: { cancel: () => undefined },
+      ticks: 0,
+      isChecking: false,
+      isSyncWaiting: options.isSyncWaiting,
+      dropReason: null,
+    }
+    current.timer = engine.every(WATCH_INTERVAL_MS, () => tick(engine, current))
+    pending = current
+    elapsedSeconds = Math.max(0, Math.floor(((await engine.now()) - options.startedAtMs) / 1000))
+    await saveRecord(engine, current)
+    return current
   }
 
   const failed = (reason: string, sheet: Sheet) =>
@@ -281,34 +434,17 @@ export function register(on: On) {
     await engine.run(cleanupArgv(python, engine.pluginRoot, { out: paths.answer }), { timeoutMs: 5000 }).catch(() => undefined)
 
     const token = tokenOf(options.nowMs)
-    const argv = receiverArgv(python, { pluginRoot: engine.pluginRoot, html: paths.html, out: paths.answer }, token)
-
-    let receiver: ReceiverInfo | null
-    try {
-      receiver = parseStartOutput((await engine.run(argv, { timeoutMs: 10000 })).stdout)
-    } catch (error) {
-      return failed(`受信サーバを起動できませんでした (${String(error)})`, sheet)
-    }
-    if (!receiver) {
-      return failed(STRINGS.noPort, sheet)
+    const receiver = await startReceiver(engine, python, sheet, token)
+    if (typeof receiver === 'string') {
+      return failed(receiver, sheet)
     }
 
-    const url = urlOf(receiver.port, token)
-    const current: Pending = {
-      sheet,
-      receiver,
-      url,
-      linkUrl: linkUrlOf(receiver.port, token),
+    const current = await armPending(engine, sheet, receiver, {
+      token,
       startedAtMs: options.nowMs,
-      timer: { cancel: () => undefined },
-      ticks: 0,
-      isChecking: false,
       isSyncWaiting: options.waitSeconds > 0,
-      dropReason: null,
-    }
-    current.timer = engine.every(WATCH_INTERVAL_MS, () => tick(engine, current))
-    pending = current
-    elapsedSeconds = 0
+    })
+    const { url } = current
 
     if (options.isBrowserWanted) {
       openBrowser(engine, url)
@@ -365,23 +501,175 @@ export function register(on: On) {
     }
   }
 
+  /**
+   * 記録から画面を組み直します。`doc-desk/<label>.json` が無い、検証を通らない、記録と版が違うときは null。
+   * 配る HTML が消えていれば書き直します。
+   */
+  async function sheetOfRecord(engine: Host, record: PendingRecord): Promise<Sheet | null> {
+    const paths = pathsOf(record.label)
+    if (!(await engine.exists(paths.form))) {
+      return null
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(await engine.readFile(paths.form))
+    } catch {
+      return null
+    }
+
+    let sheet: Sheet
+    let renderSheet: () => Promise<string | null>
+    if (record.kind === 'form') {
+      const validation = validateForm(parsed)
+      if (!validation.ok) {
+        return null
+      }
+      const { form } = validation
+      sheet = sheetOfForm(form, paths)
+      renderSheet = async () => renderHtml({ form, date: dateOf(record.startedAtMs) })
+    } else {
+      const validation = validateReview(parsed)
+      if (!validation.ok) {
+        return null
+      }
+      const { review } = validation
+      sheet = sheetOfReview(review, paths)
+      renderSheet = async () => {
+        const html = await engine.readFile(paths.doc).catch(() => null)
+        return html === null ? null : renderReviewHtml({ review, html, date: dateOf(record.startedAtMs) })
+      }
+    }
+    if (sheet.documentId !== record.documentId || sheet.revision !== record.revision) {
+      return null
+    }
+
+    if (!(await engine.exists(paths.html))) {
+      const html = await renderSheet()
+      if (html === null) {
+        return null
+      }
+      await engine.writeFile(paths.html, html)
+    }
+    return sheet
+  }
+
+  /**
+   * 受信サーバが生きていて、まだ回答を受けていなければ true。`GET /wait?timeout=0` で見ます。
+   */
+  async function isReceiverWaiting(engine: Host, record: PendingRecord): Promise<boolean> {
+    try {
+      const response = await engine.fetch(waitUrlOf(record.port, record.token, 0))
+      if (!response.ok) {
+        return false
+      }
+      return (JSON.parse(response.text) as { answered?: unknown }).answered === false
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 起動時に見つけた回答を届けます。人がいる surface では勝手に turn を始めず、
+   * `/doc-desk` を候補に出して待ちます (記録は送るまで残します)。
+   */
+  async function deliverOnStart(engine: Host, sheet: Sheet, reply: string, isHeadless: boolean) {
+    await engine.writeFile(sheet.paths.md, `${reply}\n`)
+    if (isHeadless) {
+      await forgetRecord(engine)
+      engine.uiLog(STRINGS.receivedOf(sheet.paths.md))
+      // session.start は最初の prompt より前に待たれるので、turn の開始を待たない
+      void engine.submitPrompt({ text: reply }).catch(() => undefined)
+      return
+    }
+    unsent = { sheet, reply }
+    engine.uiLog(STRINGS.unsentOf(sheet.label))
+    engine.toast(STRINGS.unsentOf(sheet.label))
+    void engine.suggest({ text: `/${COMMAND_NAME}` }).catch(() => undefined)
+  }
+
+  /**
+   * 前のセッションの待機を引き継ぎます (`session.start` から呼びます)。
+   */
+  async function carryOver(engine: Host, isHeadless: boolean) {
+    const key = recordKeyOf(cwd)
+    const stored = await engine.storeGet(key).catch(() => undefined)
+    if (stored === undefined) {
+      return
+    }
+    const record = parsePendingRecord(stored)
+    if (!record) {
+      await forgetRecord(engine)
+      return
+    }
+    if (isStale(record, await engine.now())) {
+      await forgetRecord(engine)
+      engine.uiLog(STRINGS.staleRecordOf(record.label))
+      return
+    }
+
+    const sheet = await sheetOfRecord(engine, record)
+    if (!sheet) {
+      await forgetRecord(engine)
+      return
+    }
+
+    const reply = await readReply(engine, sheet)
+    if (reply !== null) {
+      await deliverOnStart(engine, sheet, reply, isHeadless)
+      return
+    }
+
+    let receiver: ReceiverInfo = { port: record.port, pid: record.pid }
+    if (!(await isReceiverWaiting(engine, record))) {
+      // `/wait` が answered を返した直後に回答ファイルが置かれることもあるので、もう一度だけ見る
+      const late = await readReply(engine, sheet)
+      if (late !== null) {
+        await deliverOnStart(engine, sheet, late, isHeadless)
+        return
+      }
+      const python = await pythonOf(engine)
+      if (!python) {
+        engine.uiLog(`${STRINGS.restartFailedOf(sheet.label)} (${STRINGS.noPython})`)
+        return
+      }
+      const restarted = await startReceiver(engine, python, sheet, record.token, record.port)
+      if (typeof restarted === 'string') {
+        engine.uiLog(`${STRINGS.restartFailedOf(sheet.label)} (${restarted})`)
+        return
+      }
+      receiver = restarted
+      if (receiver.port !== record.port) {
+        engine.uiLog(STRINGS.portChangedOf(sheet.label, urlOf(receiver.port, record.token)))
+      }
+    }
+
+    await armPending(engine, sheet, receiver, { token: record.token, startedAtMs: record.startedAtMs, isSyncWaiting: false })
+    engine.status(STRINGS.carriedOverOf(sheet.label))
+  }
+
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
 
     const engine: Host = {
       now: () => $.clock.now(),
+      after: (ms, fn) => $.clock.after(ms, fn),
       every: (ms, fn) => $.clock.every(ms, fn),
       run: (argv, init) => $.process.run(argv, init),
       writeFile: (path, text) => $.fs.write(path, text),
       readFile: path => $.fs.read(path),
       exists: path => $.fs.exists(path),
       fetch: (url, init) => $.http.fetch(url, init),
+      storeGet: key => $.store.get(key),
+      storeSet: (key, value) => $.store.set(key, value),
+      storeDelete: key => $.store.delete(key),
       openPane: pane => $.ui.open(pane),
       closePane: pane => $.ui.close(pane),
       invalidate: () => $.ui.invalidate('ui.render'),
       uiLog: text => $.ui.log(text),
       status: text => $.ui.status(text),
+      toast: text => $.ui.toast(text),
       submitPrompt: input => $.prompt.submit(input),
+      suggest: input => $.prompt.suggest(input),
       pluginRoot: $.plugin.root,
     }
     host = engine
@@ -408,6 +696,12 @@ export function register(on: On) {
 
     void pythonOf(engine)
 
+    try {
+      await carryOver(engine, e.surface === null)
+    } catch (error) {
+      engine.uiLog(`前回の質問票を引き継げませんでした: ${String(error)}`)
+    }
+
     return next(e)
   })
 
@@ -427,26 +721,11 @@ export function register(on: On) {
 
     const paths = pathsOf(form.label)
     const nowMs = await engine.now()
-    const date = new Date(nowMs).toISOString().slice(0, 10)
 
     await engine.writeFile(paths.form, `${JSON.stringify(form, null, 2)}\n`)
-    await engine.writeFile(paths.html, renderHtml({ form, date }))
+    await engine.writeFile(paths.html, renderHtml({ form, date: dateOf(nowMs) }))
 
-    const sheet: Sheet = {
-      documentId: form.documentId,
-      revision: form.revision,
-      label: form.label,
-      heading: STRINGS.headerOf(form.label, form.revision),
-      paths,
-      replyOf: text => {
-        const answer = parseAnswer(text, form)
-        return answer ? formatReply(form, answer) : null
-      },
-      files: { form: paths.form, html: paths.html },
-      answeredContext: STRINGS.answeredContext,
-      pendingContext: STRINGS.toolContext,
-    }
-    return serveSheet(engine, sheet, {
+    return serveSheet(engine, sheetOfForm(form, paths), {
       nowMs,
       isBrowserWanted: e.openBrowser !== false,
       waitSeconds: clampWaitSeconds(e.waitSeconds),
@@ -482,26 +761,11 @@ export function register(on: On) {
     await dropPending(engine, 'replaced')
 
     const nowMs = await engine.now()
-    const date = new Date(nowMs).toISOString().slice(0, 10)
 
     await engine.writeFile(paths.form, `${JSON.stringify(review, null, 2)}\n`)
-    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date }))
+    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs) }))
 
-    const sheet: Sheet = {
-      documentId: review.documentId,
-      revision: review.revision,
-      label: review.label,
-      heading: STRINGS.reviewHeaderOf(review.label, review.revision),
-      paths,
-      replyOf: text => {
-        const answer = parseReviewAnswer(text, review)
-        return answer ? formatReviewReply(review, answer) : null
-      },
-      files: { doc: paths.doc, review: paths.form, html: paths.html },
-      answeredContext: STRINGS.reviewAnsweredContext,
-      pendingContext: STRINGS.reviewPendingContext,
-    }
-    return serveSheet(engine, sheet, {
+    return serveSheet(engine, sheetOfReview(review, paths), {
       nowMs,
       isBrowserWanted: e.openBrowser !== false,
       waitSeconds: clampWaitSeconds(e.waitSeconds),
@@ -511,8 +775,30 @@ export function register(on: On) {
 
   on('command.run', { command: 'doc-desk' }, async () => {
     const engine = host
+    if (!engine) {
+      return { text: STRINGS.nothingPending }
+    }
+
+    // 起動時に見つけた回答が未送なら送る
+    const waiting = unsent
+    if (waiting) {
+      unsent = null
+      if (!pending) {
+        await forgetRecord(engine)
+      }
+      engine.uiLog(STRINGS.receivedOf(waiting.sheet.paths.md))
+      // command.run の中の prompt.submit はエンジンが拒む (このコマンドが握る turn を待つことになる) ので、
+      // タイマーでコマンドが終わった後に回す
+      engine.after(0, () => {
+        void engine.submitPrompt({ text: waiting.reply }).catch((error: unknown) => {
+          engine.uiLog(`インタビューの回答を送れませんでした: ${String(error)}`)
+        })
+      })
+      return { text: STRINGS.sentUnsentOf(waiting.sheet.label) }
+    }
+
     const current = pending
-    if (!engine || !current) {
+    if (!current) {
       return { text: STRINGS.nothingPending }
     }
     await openPane(engine, true)

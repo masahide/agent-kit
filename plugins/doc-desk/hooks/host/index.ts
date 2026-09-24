@@ -5,6 +5,8 @@ import type {
   PaneOpenArgs,
   ProcessRunInit,
   ProcessRunResult,
+  PromptSuggestArgs,
+  PromptSuggestResult,
   PromptSubmitArgs,
   PromptSubmitResult,
   TimerCall,
@@ -20,6 +22,8 @@ import type {
 export type Host = {
   /** `$.clock.now` */
   now: () => Promise<number>
+  /** `$.clock.after` (いまのディスパッチが終わってから動かしたいとき) */
+  after: TimerCall
   /** `$.clock.every` */
   every: TimerCall
   /** `$.process.run` */
@@ -32,6 +36,12 @@ export type Host = {
   exists: (path: string) => Promise<boolean>
   /** `$.http.fetch` (受信サーバの `/wait` のロングポーリング) */
   fetch: (url: string, init?: HttpInit) => Promise<HttpResponse>
+  /** `$.store.get` (待機の記録。セッションをまたいで残る) */
+  storeGet: (key: string) => Promise<unknown>
+  /** `$.store.set` */
+  storeSet: (key: string, value: unknown) => Promise<void>
+  /** `$.store.delete` */
+  storeDelete: (key: string) => Promise<void>
   /** `$.ui.open` */
   openPane: (pane: PaneOpenArgs) => Promise<unknown>
   /** `$.ui.close` */
@@ -42,8 +52,12 @@ export type Host = {
   uiLog: (text: string) => void
   /** `$.ui.status` (プロンプト下の固定行) */
   status: (text: string | undefined) => void
+  /** `$.ui.toast` (プロンプト下に数秒だけ出る通知) */
+  toast: (text: string) => void
   /** `$.prompt.submit` */
   submitPrompt: (input: PromptSubmitArgs) => Promise<PromptSubmitResult>
+  /** `$.prompt.suggest` (プロンプト欄の薄い候補。Tab で取る) */
+  suggest: (input: PromptSuggestArgs) => Promise<PromptSuggestResult>
   /** `$.plugin.root` (plugin.json のあるディレクトリ、絶対パス) */
   pluginRoot: string
 }
