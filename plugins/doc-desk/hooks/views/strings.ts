@@ -40,6 +40,9 @@ export const STRINGS = {
   answerUrlOf: (url: string) => `回答先: ${url}  (/doc-desk で開き直せます)`,
   /** 回答が届いたときの通知 */
   receivedToastOf: (label: string) => `回答を受け取りました: ${label}`,
+  /** 会話の圧縮で要約に足す指示 */
+  compactInstructions:
+    'doc-desk の決定 (【doc-desk 回答】で始まる人の回答) は省略しないでください。決めた項目と選んだ案、指摘と書き換えを残してください。',
   /** 人がペインを閉じたときの状態行 */
   closedHint: '/doc-desk で開き直せます',
   /** [取り消す] のあとのトランスクリプト行 */

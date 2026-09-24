@@ -4,6 +4,7 @@ import { parseAnswer } from './form/answer'
 import type { FormV1 } from './form/form-v1'
 import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
+import { buildDecisionRecord, type SettledReply } from './compact/record'
 import type { Host } from './host'
 import {
   COMMAND_NAME,
@@ -197,6 +198,12 @@ export function register(on: On) {
   let elapsedSeconds = 0
   /** このセッションで届けた回答固定形 → 保存した `.md` (畳んだ回答行に出す) */
   const mdPathOfReply = new Map<string, string>()
+  /** このセッションで Claude に届けた回答 (古い順、label ごとに最新の 1 つ)。圧縮で原文を差し戻す */
+  let settled: { label: string; mdPath: string }[] = []
+
+  const rememberSettled = (sheet: Sheet) => {
+    settled = [...settled.filter(entry => entry.label !== sheet.label), { label: sheet.label, mdPath: sheet.paths.md }]
+  }
 
   const pathsOf = (label: string): Paths => {
     const base = `${cwd}/${EVIDENCE_DIR}/${label}`
@@ -303,6 +310,7 @@ export function register(on: On) {
    */
   async function settle(engine: Host, sheet: Sheet, reply: string) {
     await writeReply(engine, sheet, reply)
+    rememberSettled(sheet)
     engine.status(undefined)
     await forgetRecord(engine)
     await closePane(engine)
@@ -592,6 +600,7 @@ export function register(on: On) {
   async function deliverOnStart(engine: Host, sheet: Sheet, reply: string, isHeadless: boolean) {
     await writeReply(engine, sheet, reply)
     if (isHeadless) {
+      rememberSettled(sheet)
       await forgetRecord(engine)
       engine.uiLog(STRINGS.receivedOf(sheet.paths.md))
       // session.start は最初の prompt より前に待たれるので、turn の開始を待たない
@@ -800,6 +809,7 @@ export function register(on: On) {
     const waiting = unsent
     if (waiting) {
       unsent = null
+      rememberSettled(waiting.sheet)
       if (!pending) {
         await forgetRecord(engine)
       }
@@ -870,6 +880,33 @@ export function register(on: On) {
     }
     current.isUrlShown = true
     return { ...result, text: STRINGS.answerUrlOf(current.url) }
+  })
+
+  on('session.compact', async ($, e, next) => {
+    const engine = host
+    if (e.agentId !== undefined || !engine || settled.length === 0) {
+      return next(e)
+    }
+
+    const replies: SettledReply[] = []
+    for (const entry of settled) {
+      const text = await engine.readFile(entry.mdPath).catch(() => null)
+      if (text !== null) {
+        replies.push({ ...entry, text })
+      }
+    }
+    const record = buildDecisionRecord(replies, pending?.sheet.label ?? null)
+    if (record === null) {
+      return next(e)
+    }
+
+    const instructions = [e.instructions, STRINGS.compactInstructions].filter(Boolean).join('\n\n')
+    const result = await next({ ...e, instructions })
+    if (result.skip !== undefined) {
+      return result
+    }
+    // handle の無い message は「組み立てた文」として読まれる
+    return { ...result, messages: [...result.messages, { role: 'user' as const, text: record, toolUses: [] }] }
   })
 
   on('ui.close', { id: 'doc-desk' }, async ($, e, next) => {

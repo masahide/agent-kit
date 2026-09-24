@@ -65,6 +65,7 @@ sequenceDiagram
 | --- | --- |
 | `hooks/register.ts` | フックの登録と状態機械 (idle → waiting → submitting → idle) |
 | `hooks/host/index.ts` | `session.start` で `$` を束ねた関数群の型 |
+| `hooks/compact/record.ts` | 圧縮の結果に差し戻す `【doc-desk 決定の記録】` の組み立て (文字数の上限と切り詰め) |
 | `hooks/store/pending-record.ts` | `$.store` に残す待機の記録の型、読み取り、古さの判定 (7 日) |
 | `hooks/names.ts` | plugin 名、ツール名、コマンド名、ペイン id、見出し語 |
 | `hooks/form/form-v1.ts` | 質問票 JSON スキーマ v1 と回答 JSON の型 |
@@ -97,7 +98,7 @@ sequenceDiagram
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate plugins/doc-desk` の印字:
 
 ```
-❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, ui.close{id=doc-desk}
+❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, session.compact, ui.close{id=doc-desk}
 ```
 
 | event | what the hook does |
@@ -109,6 +110,7 @@ sequenceDiagram
 | `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
 | `ui.render` of `UserMessage` (`props.origin.kind` が `plugin`) | この Mod (`origin.name` が `doc-desk`) が投入した `【doc-desk 回答】` の行を 1 行に畳む。質問票は `【doc-desk 回答】<documentId>  Q1=A  Q2=お任せ  補足 n 件`、指摘の画面は `指摘 n 件  書き換え m 件`。2 行目に保存した `.md` のパス (このセッションで届けたものだけ) と「ctrl+o で全文」。`isExpanded` (ctrl+o) のとき、固定形として読めないとき、他の plugin や人の行は `next(e)`。描き換えは行の見え方だけで、モデルが読む文は変わらない |
 | `turn.complete` | 待機中で、main の turn (`agentId` なし) が `reason: "answer"` で終わったとき、1 つの待機につき 1 回だけ `{ text: "回答先: <url>  (/doc-desk で開き直せます)" }` を返して答えの下に出す |
+| `session.compact` | main の会話 (`agentId` なし) で、このセッションで Claude に届けた回答があるときだけ動く。`next({ ...e, instructions })` で要約に「doc-desk の決定は省略しない」を足し、戻った `messages` の末尾に `【doc-desk 決定の記録】` と各 `doc-desk/<label>.md` の全文を user の message (handle なし) として足す。回答待ちの画面があれば「届くまで対象の文書を書かない」も足す。合計 20,000 文字を超えると各回答を決定の部分 (質問票は `Qn.` の行、指摘の画面は `## 指摘` と書き換えの見出し) にし、それでも超えれば新しいものから入れて残りはパスだけ書く。`trigger` が `precompute` でも同じ |
 | `ui.close` of `doc-desk` | 人が閉じても監視は続け、状態行に「/doc-desk で開き直せます」を出す |
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
