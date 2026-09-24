@@ -113,15 +113,22 @@ sequenceDiagram
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
 
-引き継ぎ: 待機を始めると `$.store` の `pending:<cwd>` に `{ kind, label, documentId, revision, token, port, pid, startedAtMs }` を書き、回答が届くか取り消すと消します (`$.store` は plugin ごとに 1 つで、プロジェクトをまたいで共有されるので cwd をキーに含めます)。次の `session.start` では、記録を次の順に見ます。
+引き継ぎ: 待機を始めると `$.store` の `pending:<cwd>:<セッション id>` に `{ kind, label, documentId, revision, token, port, pid, startedAtMs, sessionId, heartbeatAtMs }` を書き、回答が届くか取り消すと消します。`$.store` は plugin ごとに 1 つで、プロジェクトをまたいで共有されるので cwd をキーに含めます (区切りを `/` にそろえ、末尾の `/` を外し、Windows では小文字にします)。同じフォルダで同時に動くセッションが互いの記録を上書きしないよう、キーはセッションごとに分けます。記録を持っているセッションは 30 秒ごとに `heartbeatAtMs` を進めます。
+
+次の `session.start` では、`$.store.keys()` から同じフォルダの記録を探し、次の順に見ます。
 
 | 状態 | すること |
 | --- | --- |
+| 別のセッションが今も持っている (持ち主の id が違い、heartbeat が 90 秒以内) | 引き継がず、消しもせず、`$.ui.log` で伝える (両方に回答が届いたり、片方の取り消しで相手の受信サーバを止めたりしない) |
+| 形が違う | 記録を消す |
+| 残りのうち、待機を始めたのが最も新しい記録 | このセッションのキーへ移し、下の順に見る |
 | 記録が 7 日より古い | 記録を消し、`$.ui.log` で伝える |
 | `doc-desk/<label>.json` が無い、検証を通らない、版が違う | 記録を消す |
-| `.answer.json` がある | 固定形を `.md` に書く。`e.surface` が null (`-p`、SDK) なら `$.prompt.submit` で届けて記録を消す。人がいれば `$.ui.log` と `$.ui.toast` で知らせ、`$.prompt.suggest` で `/doc-desk` を候補に出し、記録は `/doc-desk` で送るまで残す |
-| 受信サーバが生きている (`GET /wait?timeout=0` が `{"answered":false}`) | 監視を再開する。ブラウザもペインも開かず、`$.ui.status` に「前回の質問票 <label> が未回答です」を出す |
-| 受信サーバが死んでいる | 同じ token と `--port <記録の port>` で `receiver.py start` を呼び、監視を再開する。port が変わったら新しい URL を `$.ui.log` で伝える。`.html` が消えていれば書き直す |
+| `.answer.json` がある | 固定形を `.md` に書く。`e.surface` が null (`-p`、SDK) なら `$.prompt.submit` で届け、受け付けられてから記録を消す (その前にプロセスが終わっても次の起動でまた届ける)。人がいれば `$.ui.log` と `$.ui.toast` で知らせ、`$.prompt.suggest` で `/doc-desk` を候補に出し、記録は `/doc-desk` で送るまで残す (送れなければ未送に戻す) |
+| 受信サーバが生きている (`GET /wait?timeout=0` が `{"answered":false}`) | 監視を再開する。ブラウザもペインも開かず、`$.ui.status` に「前回の質問票 <label> が未回答です」(指摘の画面なら「前回の指摘の画面 …」) を出す |
+| 受信サーバに届かない | 同じ token と `--port <記録の port>` で `receiver.py start` を呼び、監視を再開する。同じ port を取れなかったら生死をもう一度見て、古い受信サーバが生きていれば (さっきの確認は一時的な失敗)、起動し直した方を止めて古い方を使う。古い方の pid は他のプロセスに使い回されているかもしれないので止めない。古い方も死んでいれば新しい URL を `$.ui.log` で伝える。`.html` が消えていれば書き直す |
+
+このセッションが止まっている間に lease (90 秒) が切れ、別のセッションが記録を引き継いだときは、heartbeat で記録が消えていることに気付き、受信サーバは止めずに手を引きます。
 
 回答 JSON は user turn の隠し context には添えません。Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないため (実測、plan.md 4 章 V7)、回答 JSON は `doc-desk/<label>.answer.json` を読んで照合します。
 
@@ -130,15 +137,15 @@ sequenceDiagram
 validate の印字:
 
 ```
-❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.prompt.suggest, $.store.delete, $.store.get, $.store.set, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
+❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.prompt.suggest, $.session.id, $.store.delete, $.store.get, $.store.keys, $.store.set, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
 ```
 
-`clock.after` (`/doc-desk` の後に未送の回答を送る), `clock.every` (回答の監視), `clock.now`,
+`clock.after` (`/doc-desk` の後に未送の回答を送る), `clock.every` (回答の監視と、待機の記録の heartbeat), `clock.now`,
 `command.register`, `fs.exists`, `fs.read`, `fs.write`,
 `http.fetch` (同期待ちの `GET /wait?t=…&timeout=4` と、引き継ぎの生死確認 `timeout=0`。127.0.0.1 の受信サーバへ),
 `process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
 `prompt.submit`, `prompt.suggest` (起動時に届いていた回答を送る `/doc-desk` を候補に出す),
-`store.get` / `store.set` / `store.delete` (待機の記録 `pending:<cwd>`),
+`session.id` (待機の記録の持ち主), `store.get` / `store.set` / `store.delete` / `store.keys` (待機の記録 `pending:<cwd>:<セッション id>`),
 `tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`, `ui.toast` (引き継いだ回答の案内と、回答が届いたときの「回答を受け取りました: <label>」)。
 `$.plugin.root` も読みます (呼び出しではないので印字されません)。`model` は使いません。
 
