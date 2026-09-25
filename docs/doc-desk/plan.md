@@ -151,6 +151,8 @@ stop-ai-slop-jp と humanizer-ja は、生成 AI が書いた日本語から AI 
 
 2026-09-24 に、Mod とスキルの名前を `document-interview` から `doc-desk` (文書の編集デスク) に変えました。指摘モードと添削を足したので、この Mod は書く前に論点を聞くだけでなく、書いた後に指摘を受けて直すところまで受け持ちます。前の名前は書く前の段階しか表さず、スキルの呼び出し (`/document-interview:document-interview`) も長いためです。新聞や雑誌の編集デスクは、書く前に方針を聞き、書いた後に赤を入れます。この役割が両方の段階に合います。コマンド (`/doc-desk`)、ペインの id、証跡のフォルダ (`doc-desk/`)、回答固定形の 1 行目 (`【doc-desk 回答】`) も同じ名前にそろえました。まだリリースしていないので、前の名前との互換は残していません。
 
+2026-09-25 に、開き直しと未送の回答の送信を受け持つコマンドの名前を `/doc-desk` から `/doc-desk-resume` に変えました。エンジン (Claude Code 2.1.282) は、プラグインと同じ名前の短いスラッシュコマンドを、そのプラグインの同名のスキル (`/doc-desk:doc-desk`) の短い形として取っておくので、`$.command.register` が `/doc-desk` を断っていました。断られたままだと、案内や入力候補の `/doc-desk` はスキルのほうを起動し、未送の回答が届きません。`$.command.register` の名前はプラグイン名で囲まれず (`:` も使えない)、そのまま `/<name>` になるので、`resume` だけでは組み込みの `/resume` と重なります。公式のプラグインが、プラグインと同じ名前を入り口に使い、囲まれない名前にはプラグイン名を入れる (`ralph-loop` の `cancel-ralph`) のにならい、スキルを入り口のまま残して、コマンドにプラグイン名を入れました。
+
 ### 指摘モードの設計
 
 指摘モードは、書き上げた文書を Review Workspace の左に出し、人が段落や選んだ文字列に付けた指摘を受け取って、Claude が文書を直す段階です。2026-09-23 にツール `open_review` として実装しました (`plugins/doc-desk/hooks/review/`、手順は `skills/doc-desk/references/review-mode.md`)。設計は同じ日に、この Mod 自身を使い、2 枚の質問票で決めました。1 枚目で画面と流れを決め、2 枚目で、1 枚目の後に残った 3 点 (宣言とみなす発言、HTML ファイルの置き場所、長い文書の扱い) を決めました。質問票は `doc-desk/review-mode-design.json` と `doc-desk/review-mode-design-r2.json`、回答は `doc-desk/review-mode-design.md` と `doc-desk/review-mode-design-r2.md` です。このリポジトリでは `doc-desk/` を git の対象から外しているので、どれも作者の手元にだけあります。

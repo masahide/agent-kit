@@ -24,9 +24,9 @@ export const REVIEW_TOOL_NAME = 'open_review'
 export const FULL_REVIEW_TOOL_NAME = `mcp__${PLUGIN_NAME}__${REVIEW_TOOL_NAME}`
 
 /**
- * `/doc-desk` コマンドの名前。
+ * `/doc-desk-resume` コマンドの名前。
  */
-export const COMMAND_NAME = 'doc-desk'
+export const COMMAND_NAME = 'doc-desk-resume'
 
 /**
  * `$.ui.open` に渡すペインの id。`ui.render` の `requestId` と一致します。

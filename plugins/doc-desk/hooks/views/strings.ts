@@ -26,19 +26,19 @@ export const STRINGS = {
   openBrowser: 'ブラウザで開く',
   /** [取り消す] ボタン */
   cancel: '取り消す',
-  /** 待機中の画面が無いときの `/doc-desk` の返答 */
+  /** 待機中の画面が無いときの `/doc-desk-resume` の返答 */
   nothingPending: '待機中の質問票も指摘の画面もありません',
-  /** 待機中に `/doc-desk` を実行したときの返答 */
+  /** 待機中に `/doc-desk-resume` を実行したときの返答 */
   reopenedOf: (url: string) => `インタビューのペインとブラウザを開き直しました: ${url}`,
   /** 起動時に、前のセッションの回答が届いていたとき (トランスクリプト行と通知) */
-  unsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答が届いています。/doc-desk で Claude に送れます`,
-  /** 未送の回答を `/doc-desk` で送ったときの返答 */
+  unsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答が届いています。/doc-desk-resume で Claude に送れます`,
+  /** 未送の回答を `/doc-desk-resume` で送ったときの返答 */
   sentUnsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答を Claude に送ります`,
   /** 未送の回答を送れなかったとき */
   unsentFailedOf: (kind: SheetKind, label: string) =>
-    `${sheetNameOf(kind)} ${label} の回答を送れませんでした。/doc-desk でもう一度送れます`,
+    `${sheetNameOf(kind)} ${label} の回答を送れませんでした。/doc-desk-resume でもう一度送れます`,
   /** 起動時に、前のセッションの待機を引き継いだときの状態行 */
-  carriedOverOf: (kind: SheetKind, label: string) => `前回の${sheetNameOf(kind)} ${label} が未回答です。/doc-desk で開き直せます`,
+  carriedOverOf: (kind: SheetKind, label: string) => `前回の${sheetNameOf(kind)} ${label} が未回答です。/doc-desk-resume で開き直せます`,
   /** 引き継いで受信サーバを起動し直したら port が変わったとき */
   portChangedOf: (kind: SheetKind, label: string, url: string) => `${sheetNameOf(kind)} ${label} の URL が変わりました: ${url}`,
   /** 引き継いで受信サーバを起動し直せなかったとき */
@@ -57,26 +57,26 @@ export const STRINGS = {
   /** 畳んだ回答行の 2 行目 */
   replyRowHintOf: (mdPath: string | undefined) => (mdPath ? `${mdPath}  (ctrl+o で全文)` : 'ctrl+o で全文'),
   /** 待機中の turn の答えの下に 1 回だけ添える行 */
-  answerUrlOf: (url: string) => `回答先: ${url}  (/doc-desk で開き直せます)`,
+  answerUrlOf: (url: string) => `回答先: ${url}  (/doc-desk-resume で開き直せます)`,
   /** 回答が届いたときの通知 */
   receivedToastOf: (label: string) => `回答を受け取りました: ${label}`,
   /** 回答待ちの間に対象の文書へ書こうとしたときの deny の理由 (モデルが読む) */
   guardReasonOf: (label: string, path: string) =>
     `doc-desk: ${label} の回答待ちなので、${path} への書き込みを止めました。この文書への書き込みをやめてターンを終え、` +
-    '回答が届くのを待ってください (Bash など別の手段でも書かないでください)。人には「ブラウザで答えるか、/doc-desk で開き直してください」と伝えてください',
+    '回答が届くのを待ってください (Bash など別の手段でも書かないでください)。人には「ブラウザで答えるか、/doc-desk-resume で開き直してください」と伝えてください',
   /** 会話の圧縮で差し戻す決定の記録に足す、回答待ちの注記 */
   waitingNoteOf: (kind: SheetKind, label: string, url: string) =>
     `${sheetNameOf(kind)} ${label} は回答待ちです。回答が届くまで対象の文書を書きません。` +
-    `人には、回答先 ${url} で答えるか、/doc-desk で開き直すよう案内してください。`,
+    `人には、回答先 ${url} で答えるか、/doc-desk-resume で開き直すよう案内してください。`,
   /** 回答は届いたが Claude に送っていない間に、対象の文書へ書こうとしたときの deny の理由 (モデルが読む) */
   guardUnsentReasonOf: (label: string, path: string) =>
     `doc-desk: ${label} の回答は届いていますが、まだ受け取っていないので、${path} への書き込みを止めました。` +
-    'この文書への書き込みをやめてターンを終えてください。人には「/doc-desk で回答を送ってください」と伝えてください',
+    'この文書への書き込みをやめてターンを終えてください。人には「/doc-desk-resume で回答を送ってください」と伝えてください',
   /** 会話の圧縮で要約に足す指示 */
   compactInstructions:
     'doc-desk の決定 (【doc-desk 回答】で始まる人の回答) は省略しないでください。決めた項目と選んだ案、指摘と書き換えを残してください。',
   /** 人がペインを閉じたときの状態行 */
-  closedHint: '/doc-desk で開き直せます',
+  closedHint: '/doc-desk-resume で開き直せます',
   /** [取り消す] のあとのトランスクリプト行 */
   cancelled: 'インタビューを取り消しました',
   /** 回答を受け取ったあとのトランスクリプト行 */

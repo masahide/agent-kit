@@ -70,7 +70,7 @@ describe('圧縮で決定を残す', () => {
     const text = result.messages?.at(-1)?.text ?? ''
     expect(text).toContain('質問票 spec-auth-01-nt は回答待ちです。')
     expect(text, '圧縮で消える回答先の URL を載せる').toContain(url)
-    expect(text).toContain('/doc-desk')
+    expect(text).toContain('/doc-desk-resume')
   })
 
   test('指摘の画面の回答待ちは「指摘の画面」と書く', () => {

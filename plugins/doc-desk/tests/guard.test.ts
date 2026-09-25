@@ -158,7 +158,7 @@ describe('回答前の書き込みを止める', () => {
     expect(await $.tool.check(write('C:/Work/docs/other.md'))).toEqual({ decision: 'allow' })
   })
 
-  test('届いた回答をまだ送っていない間 (起動時に見つけた未送の回答) も止め、/doc-desk で送るよう伝える', async ($, on) => {
+  test('届いた回答をまだ送っていない間 (起動時に見つけた未送の回答) も止め、/doc-desk-resume で送るよう伝える', async ($, on) => {
     const record = {
       kind: 'form',
       label: 'spec-auth-01',
