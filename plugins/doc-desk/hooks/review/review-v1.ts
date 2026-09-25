@@ -34,6 +34,8 @@ export type ReviewComment = {
   quote: string
   /** コメント。無ければ空 */
   text: string
+  /** Claude の候補を人が採用した指摘なら `claude`。人が付けた指摘には無い */
+  source?: 'claude'
 }
 
 /**

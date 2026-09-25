@@ -89,6 +89,8 @@ export const STRINGS = {
   reviewAnsweredContext:
     'reply が人の指摘 (【doc-desk 回答】で始まる固定形) です。user turn は届きません。' +
     '指摘を反映して文書を直し、完了報告で指摘ごとに直した箇所か直さなかった理由を添えてください。',
+  /** 候補づくり (fork) を待つ間に中断されたときの `cancelled` の理由 */
+  abortedDuringSelfReview: '指摘の画面を出す前 (Claude の候補を作っている間) に中断されました。画面は出していません',
   /** `cancelled` の理由 */
   cancelledByPerson: '人が [取り消す] を押しました',
   replacedByAnother: '別の open_form か open_review で差し替えられました',

@@ -1,4 +1,4 @@
-import type { On, Timer } from 'claude-code'
+import type { On, PluginOptions, Timer } from 'claude-code'
 
 import { parseAnswer } from './form/answer'
 import type { FormV1 } from './form/form-v1'
@@ -17,6 +17,7 @@ import {
 } from './names'
 import {
   cleanupArgv,
+  removeArgv,
   isPython3,
   linkUrlOf,
   openBrowserArgv,
@@ -31,7 +32,8 @@ import {
 import { formatReply } from './reply/format'
 import { summarizeReply } from './reply/summary'
 import { parseReviewAnswer } from './review/answer'
-import { documentErrors } from './review/document'
+import { candidatePrompt, parseCandidates, wantsSelfReview, type ReviewCandidate } from './review/candidates'
+import { documentErrors, numberedBlocks } from './review/document'
 import { formatReviewReply } from './review/format'
 import type { ReviewV1 } from './review/review-v1'
 import { validateReview } from './review/validate-review'
@@ -71,6 +73,8 @@ type Paths = {
   answer: string
   md: string
   doc: string
+  /** 指摘の画面に出した Claude の候補 (証跡) */
+  candidates: string
 }
 
 /**
@@ -154,7 +158,7 @@ function sheetOfForm(form: FormV1, paths: Paths): Sheet {
 /**
  * 指摘の画面を組みます。
  */
-function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
+function sheetOfReview(review: ReviewV1, paths: Paths, hasCandidates: boolean): Sheet {
   return {
     kind: 'review',
     documentId: review.documentId,
@@ -166,7 +170,7 @@ function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
       const answer = parseReviewAnswer(text, review)
       return answer ? formatReviewReply(review, answer) : null
     },
-    files: { doc: paths.doc, review: paths.form, html: paths.html },
+    files: { doc: paths.doc, review: paths.form, html: paths.html, ...(hasCandidates && { candidates: paths.candidates }) },
     answeredContext: STRINGS.reviewAnsweredContext,
     pendingContext: STRINGS.reviewPendingContext,
     guardedPaths: [...(review.source === undefined ? [] : [review.source]), paths.doc],
@@ -206,8 +210,9 @@ const isAccepted = (result: { drop?: string }): boolean => result.drop === undef
  * ```
  *
  * @param on エンジンの登録関数
+ * @param options plugin.json の `userConfig` の値 (`selfReview`: 指摘の画面に Claude の候補を出すか。既定 true)
  */
-export function register(on: On) {
+export function register(on: On, options: PluginOptions = {}) {
   let host: Host | null = null
   let cwd = ''
   /** このセッションの id (`$.session.id()`)。待機の記録の持ち主に書く */
@@ -238,6 +243,7 @@ export function register(on: On) {
       answer: `${base}.answer.json`,
       md: `${base}.md`,
       doc: `${base}.doc.html`,
+      candidates: `${base}.candidates.json`,
     }
   }
 
@@ -708,7 +714,7 @@ export function register(on: On) {
         return null
       }
       const { review } = validation
-      sheet = sheetOfReview(review, paths)
+      sheet = sheetOfReview(review, paths, await engine.exists(paths.candidates))
       renderSheet = async () => {
         const html = await engine.readFile(paths.doc).catch(() => null)
         return html === null ? null : renderReviewHtml({ review, html, date: dateOf(record.startedAtMs) })
@@ -898,6 +904,7 @@ export function register(on: On) {
       toast: text => $.ui.toast(text),
       submitPrompt: input => $.prompt.submit(input),
       suggest: input => $.prompt.suggest(input),
+      fork: request => $.model.fork(request),
       pluginRoot: $.plugin.root,
     }
     host = engine
@@ -991,14 +998,43 @@ export function register(on: On) {
       return invalid(errors.map(message => `${paths.doc}: ${message}`))
     }
 
+    // Claude 自身の指摘の候補 (fork に 1 問だけ投げる)。失敗しても候補なしで進む
+    let candidates: ReviewCandidate[] = []
+    const isSelfReview = wantsSelfReview(options, e.selfReview)
+    if (isSelfReview) {
+      const blocks = numberedBlocks(html)
+      const reply = await engine.fork({ prompt: candidatePrompt(blocks, review.title) }).catch(() => null)
+      // fork を待つ間に人が中断したら (fork はその turn の中断で aborted を返す)、受信サーバもブラウザも出さずに終える
+      if (next.signal.aborted || (reply !== null && !reply.isAnswered && reply.reason === 'aborted')) {
+        return {
+          result: JSON.stringify({
+            status: 'cancelled',
+            documentId: review.documentId,
+            revision: review.revision,
+            reason: STRINGS.abortedDuringSelfReview,
+          }),
+        }
+      }
+      if (reply?.isAnswered) {
+        candidates = parseCandidates(reply.text, blocks.length)
+      }
+      await engine.writeFile(paths.candidates, `${JSON.stringify(candidates, null, 2)}\n`)
+    } else if (await engine.exists(paths.candidates)) {
+      // 前回の候補の証跡を残すと、今回の画面に出した候補と取り違えるので消す
+      const python = await pythonOf(engine)
+      if (python) {
+        await engine.run(removeArgv(python, engine.pluginRoot, [paths.candidates]), { timeoutMs: 5000 }).catch(() => undefined)
+      }
+    }
+
     await dropPending(engine, 'replaced')
 
     const nowMs = await engine.now()
 
     await engine.writeFile(paths.form, `${JSON.stringify(review, null, 2)}\n`)
-    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs) }))
+    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs), candidates }))
 
-    return serveSheet(engine, sheetOfReview(review, paths), {
+    return serveSheet(engine, sheetOfReview(review, paths, isSelfReview), {
       nowMs,
       isBrowserWanted: e.openBrowser !== false,
       waitSeconds: clampWaitSeconds(e.waitSeconds),

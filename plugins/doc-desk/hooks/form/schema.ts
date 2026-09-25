@@ -175,6 +175,11 @@ export const REVIEW_INPUT_SCHEMA = {
     review: REVIEW_SCHEMA,
     openBrowser: OPEN_BROWSER,
     waitSeconds: WAIT_SECONDS,
+    selfReview: {
+      type: 'boolean',
+      description:
+        '既定 true。画面を出す前に、あなた自身が文書の直しどころを最大 5 件見つけ、画面に「Claude の候補」として出します (人は採用か却下を選ぶだけ)。false で出しません',
+    },
   },
   required: ['review'],
 } as const

@@ -16,7 +16,7 @@ function commentOf(value: unknown): ReviewComment | null {
   if (chip === null && text.trim() === '') {
     return null
   }
-  return { block: value.block as number, chip, quote, text }
+  return { block: value.block as number, chip, quote, text, ...(value.source === 'claude' && { source: 'claude' as const }) }
 }
 
 const isBlock = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 1

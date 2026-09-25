@@ -1,4 +1,4 @@
-import type { Args, On, PaneOpenArgs, RenderInput, SessionStartInput } from 'claude-code'
+import type { Args, ModelForkResult, On, PaneOpenArgs, RenderInput, SessionStartInput } from 'claude-code'
 import { mock, type MockClock } from 'claude-code/testing'
 
 import { PANE_ID, PLUGIN_NAME } from '../../hooks/names'
@@ -87,6 +87,8 @@ export type WorldOptions = {
   store?: Record<string, unknown>
   /** シンボリックリンク: リンクのパス → 行き先のパス (`fs.stat` の realPath) */
   links?: Record<string, string>
+  /** `$.model.fork` の答え。省略時は `nothing-to-fork` (会話がまだ無い) */
+  forkReply?: ModelForkResult
 }
 
 /**
@@ -130,6 +132,7 @@ export function world(on: On, options: WorldOptions = {}) {
   const storeOps: string[] = []
   const toasts: string[] = []
   const suggested: string[] = []
+  const forkPrompts: string[] = []
   let invalidations = 0
 
   const clock = mock.clock(on, { now: Date.UTC(2026, 8, 22, 12, 0, 0) })
@@ -283,6 +286,11 @@ export function world(on: On, options: WorldOptions = {}) {
   // core は答えの文をそのまま返す
   on('turn.complete', ($, e) => ({ text: e.answer }))
 
+  on('model.fork', ($, e) => {
+    forkPrompts.push(e.prompt)
+    return { value: options.forkReply ?? { isAnswered: false as const, reason: 'nothing-to-fork' as const } }
+  })
+
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }
@@ -306,6 +314,7 @@ export function world(on: On, options: WorldOptions = {}) {
     storeOps,
     toasts,
     suggested,
+    forkPrompts,
     registeredTools,
     registeredCommands,
     clock,

@@ -54,6 +54,16 @@ export const cleanupArgv = (python: readonly string[], pluginRoot: string, paths
 ]
 
 /**
+ * ファイルを消す argv (receiver.py の `clean`。無いものは飛ばす)。
+ */
+export const removeArgv = (python: readonly string[], pluginRoot: string, paths: readonly string[]): string[] => [
+  ...python,
+  scriptOf(pluginRoot),
+  'clean',
+  ...paths,
+]
+
+/**
  * 受信サーバを切り離して起動する argv。receiver.py の `start` が `serve` を背景に回し、
  * `serve` が listen した port と pid を `{"port": n, "pid": n}` の 1 行で stdout に出して戻ります。
  * 3 秒のうちに listen できなければ何も出しません。

@@ -56,9 +56,11 @@
 | `source` | 任意 | 元の文書のパス。画面に出すほか、指摘が届くまで Mod がこのパスへの書き込みを止めます (`doc-desk/<label>.doc.html` も止めます) |
 | `part` | 任意 | 分けて出すときの `{ "index": 2, "total": 3 }` (index は 1 から、total は 2〜50) |
 
+`selfReview` (任意、既定 `true`) は、画面を出す前に Mod があなた自身 (`$.model.fork` で今の会話の続きとして) に 1 問だけ聞き、文書の直しどころを最大 5 件、画面に「Claude の候補」として出すかどうかです。人は候補ごとに [採用] か [却下] を押すだけです。候補は `doc-desk/<label>.candidates.json` にも残ります。人が「候補は要らない」と言ったときは `false` にします。plugin の設定 `selfReview` が切ってあれば、`true` でも出ません。候補づくりに失敗しても画面はふつうに出ます。
+
 `waitSeconds` と `openBrowser` は `open_form` と同じです。結果の `status` (`answered` / `pending` / `cancelled` / `invalid` / `failed`) も `open_form` と同じ意味です。違いは次のとおりです。
 
-- `files` は `{ doc, review, html }` (`answered` では `answer` と `md` を足す) です。`review` は検証済みの入力 (`doc-desk/<label>.json`) です。
+- `files` は `{ doc, review, html }` (候補を作ったときは `candidates`、`answered` では `answer` と `md` を足す) です。候補づくりの間に人が中断すると `cancelled` が返り、画面は出ていません。`review` は検証済みの入力 (`doc-desk/<label>.json`) です。
 - `invalid` の `errors` には、`review` の欄の誤りに加えて、HTML ファイルの誤り (`<パス>: <直し方>`) が入ります。ファイルが無い、許可リストに無い要素や属性がある、10 万文字を超える、段落が無い、のどれかです。直して同じツールをもう一度呼びます。
 - `pending` のとき、指摘は後で `【doc-desk 回答】<documentId>` で始まる user turn として届きます。届くまで文書を直さず、完了報告もせず、ターンを終えます。
 
@@ -100,6 +102,7 @@
 
 - 1 行目は `【doc-desk 回答】` + `documentId` です。2 行目の `対象:` は画面の HTML ファイルで、分けて出したときは末尾に `(<index>/<total>)` が付きます。
 - `## 指摘` の各行は `#段落番号 [チップ] 「選んだ文字列」 コメント` です。チップ、選んだ文字列、コメントは、無ければ省かれます。段落番号の順、同じ段落の中は人が付けた順です。指摘が無ければ `(指摘なし)` の 1 行です。
+- 行末に `(Claude の候補)` が付いた指摘は、あなた自身が出した候補を人が採用したものです (例: `#2 [根拠が要る] 「OIDC に統一」 なぜ OIDC かを足して (Claude の候補)`)。人の指摘と同じく反映します。人が却下した候補は届きません。全体へのコメントの候補を採用したときは、全体へのコメントに `[チップ] コメント (Claude の候補)` の行として入ります。
 - チップは次の 9 種です: 短くする、言い換える、分かりやすく、具体例を足す、根拠が要る、削る、順序を入れ替える、図を直す、ここは良い。
 - `## 指摘した段落` は、指摘の付いた段落の文字列です (400 文字を超える分は `…`)。表の行はセルを ` | ` でつないだものです。この文字列を元の文書と照らし合わせて、直す場所を探します。
 - `## 書き換え` は、人がその場で直したもの (添削) があるときだけ出ます。次の 4 種で、段落番号の順、同じ段落の中は書き換えか削除、移動、追加の順です。
@@ -110,7 +113,7 @@
 - 書き換えと追加の `<使い方>` は、人が画面で選んだ `そのまま` (既定) か `参考にして直す` です。扱いは 6 章の 1 のとおりです。
 - `前:` と `後:` は書式を外した文です。文が複数行なら、2 行目以降は行頭に空白 2 つが付きます (空白 2 つは文の一部ではありません)。表の行の `後:` は、セルを ` | ` で区切った文です。
 - 全体へのコメントの扱いは回答固定形 v1 と同じです (`references/reply-format-v1.md`)。人の記述は一字一句そのまま扱います。
-- 迷うときだけ `doc-desk/<label>.answer.json` を読みます。形は `{ "kind": "review", "documentId", "revision", "comments": [{ "block", "chip", "quote", "text" }], "edits": [{ "kind": "rewrite" | "delete" | "move" | "add", "block", "text"?, "mode"?: "exact" | "guide", "to"? }], "blocks": { "<段落番号>": "<文字列>" }, "globalNote", "submittedAt" }` です。
+- 迷うときだけ `doc-desk/<label>.answer.json` を読みます。形は `{ "kind": "review", "documentId", "revision", "comments": [{ "block", "chip", "quote", "text", "source"?: "claude" }], "edits": [{ "kind": "rewrite" | "delete" | "move" | "add", "block", "text"?, "mode"?: "exact" | "guide", "to"? }], "blocks": { "<段落番号>": "<文字列>" }, "globalNote", "submittedAt" }` です。
 - `failed` で人が回答 JSON をチャットに貼ったときは、Claude がこの形に当てはめて読みます。
 
 ## 6. 指摘の反映と完了報告

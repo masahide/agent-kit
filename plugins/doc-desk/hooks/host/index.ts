@@ -3,6 +3,8 @@ import type {
   FsStatOptions,
   HttpInit,
   HttpResponse,
+  ModelForkRequest,
+  ModelForkResult,
   PaneCloseArgs,
   PaneOpenArgs,
   ProcessRunInit,
@@ -64,6 +66,8 @@ export type Host = {
   submitPrompt: (input: PromptSubmitArgs) => Promise<PromptSubmitResult>
   /** `$.prompt.suggest` (プロンプト欄の薄い候補。Tab で取る) */
   suggest: (input: PromptSuggestArgs) => Promise<PromptSuggestResult>
+  /** `$.model.fork` (main の会話の後ろに 1 問だけ足して答えさせる。指摘の候補に使う) */
+  fork: (request: ModelForkRequest) => Promise<ModelForkResult>
   /** `$.plugin.root` (plugin.json のあるディレクトリ、絶対パス) */
   pluginRoot: string
 }
