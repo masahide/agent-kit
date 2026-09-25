@@ -2,6 +2,7 @@ import { describe, expect, test, tier } from 'claude-code/testing'
 
 import { isSamePath, normalizePath, writeTargetOf } from '../hooks/guard/paths'
 import { FULL_REVIEW_TOOL_NAME, FULL_TOOL_NAME, PANE_ID, PLUGIN_NAME } from '../hooks/names'
+import { recordKeyOf } from '../hooks/store/pending-record'
 import { STRINGS } from '../hooks/views/strings'
 import Fixtures from './fixtures'
 
@@ -132,5 +133,60 @@ describe('回答前の書き込みを止める', () => {
     expect(writeTargetOf(null)).toBeNull()
     expect(isSamePath(['/a', '/b'], ['/c', '/b'])).toBe(true)
     expect(isSamePath(['/a'], ['/c'])).toBe(false)
+  })
+
+  test('シンボリックリンクのフォルダ越しに、まだ無いファイルを作る書き込みも止める', async ($, on) => {
+    const world = Fixtures.world(on, { links: { '/work/linkdir': '/work/docs' } })
+    allowBeneath(on)
+    world.files.set('/work/docs/other.md', '# 別の文書')
+    await $.session.start(Fixtures.SESSION)
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+
+    expect(await $.tool.check(write('/work/linkdir/auth.md'))).toMatchObject({ decision: 'deny' })
+    expect(await $.tool.check(write('/work/linkdir/other.md'))).toEqual({ decision: 'allow' })
+  })
+
+  test('Windows の cwd でも、大文字小文字と区切りの違う綴りを止める', async ($, on) => {
+    const world = Fixtures.world(on)
+    allowBeneath(on)
+    await $.session.start({ ...Fixtures.SESSION, cwd: 'C:\\Work' })
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+
+    expect(await $.tool.check(write('c:\\work\\DOCS\\Auth.md'))).toMatchObject({ decision: 'deny' })
+    expect(await $.tool.check(write('C:/Work/docs/other.md'))).toEqual({ decision: 'allow' })
+  })
+
+  test('届いた回答をまだ送っていない間 (起動時に見つけた未送の回答) も止め、/doc-desk で送るよう伝える', async ($, on) => {
+    const record = {
+      kind: 'form',
+      label: 'spec-auth-01',
+      documentId: 'spec-auth-01',
+      revision: 1,
+      token: 'feedc0de',
+      port: 50123,
+      pid: 777,
+      startedAtMs: Date.UTC(2026, 8, 22, 11, 0, 0),
+      sessionId: 'session-before',
+      heartbeatAtMs: 0,
+    }
+    const world = Fixtures.world(on, { store: { [recordKeyOf('/work', 'session-before')]: record } })
+    allowBeneath(on)
+    world.files.set('/work/doc-desk/spec-auth-01.json', JSON.stringify(Fixtures.FORM))
+    world.files.set('/work/doc-desk/spec-auth-01.html', '<!doctype html>')
+    world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+
+    expect(await $.tool.check(write('docs/auth.md'))).toEqual({
+      decision: 'deny',
+      reason: STRINGS.guardUnsentReasonOf('spec-auth-01', 'docs/auth.md'),
+    })
+
+    await $.command.run(Fixtures.DESK_COMMAND)
+    await world.clock.settle()
+    expect(world.submitted).toHaveLength(1)
+    expect(await $.tool.check(write('docs/auth.md')), '送った後は通す').toEqual({ decision: 'allow' })
   })
 })

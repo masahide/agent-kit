@@ -70,4 +70,16 @@ describe('summarizeReply', () => {
     expect(summarizeReply('【doc-desk 回答】d\n自由な文\n---\n締め')).toBeNull()
     expect(summarizeReply('【doc-desk 回答】\nQ1. 題: A — 案\n---')).toBeNull()
   })
+
+  test('問いの題が分かれば、題に「: A — B」のような文字列があっても選んだ案を取り違えない', () => {
+    const text = [
+      '【doc-desk 回答】d',
+      'Q1. 方式: A — 甲にしますか: (未選択 = お任せ)',
+      'Q2. 期限: B — 乙: C — 三つ目',
+      '---',
+      '締め',
+    ].join('\n')
+    expect(summarizeReply(text, ['方式: A — 甲にしますか', '期限: B — 乙'])?.detail).toBe('Q1=お任せ  Q2=C')
+    expect(summarizeReply(text, ['違う題', '期限: B — 乙']), '題が合わなければ読めない').toBeNull()
+  })
 })

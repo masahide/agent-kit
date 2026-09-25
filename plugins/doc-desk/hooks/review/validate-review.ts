@@ -52,8 +52,8 @@ export function validateReview(input: unknown): ReviewValidation {
     fail('title', '空でない文字列にしてください')
   }
 
-  if (input.source !== undefined && !isFilled(input.source)) {
-    fail('source', '省略するか、空でない文字列 (元の文書のパス) にしてください')
+  if (input.source !== undefined && (!isFilled(input.source) || input.source.length > 1024)) {
+    fail('source', '省略するか、1〜1024 文字の空でない文字列 (元の文書のパス) にしてください')
   }
 
   if (input.part !== undefined) {

@@ -90,7 +90,10 @@ export function receiverArgv(
     paths.html,
     '--out',
     paths.out,
-    ...(preferredPort === undefined ? [] : ['--port', String(preferredPort)]),
+    // 整数の 1〜65535 だけを渡す (それ以外を渡すと argparse が終了コード 2 で終わり、起動失敗の理由が分かりにくい)
+    ...(preferredPort !== undefined && Number.isInteger(preferredPort) && preferredPort > 0 && preferredPort <= 65535
+      ? ['--port', String(preferredPort)]
+      : []),
   ]
 }
 
@@ -108,7 +111,7 @@ export function parseStartOutput(stdout: string): ReceiverInfo | null {
       Number.isInteger((parsed as { pid?: unknown }).pid)
     ) {
       const { port, pid } = parsed as { port: number; pid: number }
-      return port > 0 && pid > 0 ? { port, pid } : null
+      return port > 0 && port <= 65535 && pid > 0 ? { port, pid } : null
     }
   } catch {
     // JSON でなければ null

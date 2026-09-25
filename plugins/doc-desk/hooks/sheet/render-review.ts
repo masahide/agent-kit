@@ -525,6 +525,8 @@ const SCRIPT = `
   }
 
   function adopt(candidate) {
+    // 押し重ねや描き直しの遅れで 2 回呼ばれても、指摘は 1 つだけ足す
+    if (candidate.state !== 'open') return;
     if (candidate.block) {
       var block = blocks[candidate.block - 1];
       var at = candidate.quote ? block.orig.textContent.indexOf(candidate.quote) : -1;
@@ -546,6 +548,7 @@ const SCRIPT = `
   }
 
   function reject(candidate) {
+    if (candidate.state !== 'open') return;
     candidate.state = 'rejected';
     saveDraft();
     render();
