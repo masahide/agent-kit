@@ -208,7 +208,7 @@ const SCRIPT = `
     if (!always && ownText(el).trim() === '') return;
     var text = textOf(el);
     if (text.trim() === '') return;
-    blocks.push({ el: el, text: text, orig: el.cloneNode(true) });
+    blocks.push({ el: el, text: text, orig: null });
     var n = blocks.length;
     el.classList.add('blk');
     el.setAttribute('data-n', String(n));
@@ -227,6 +227,15 @@ const SCRIPT = `
     }
     return { block: block, chip: c.chip, quote: block ? quote : '', text: block || !quote ? c.text : '「' + quote + '」 ' + c.text, state: 'open' };
   });
+
+  // 元の姿は、全部の段落に番号を振り終えてから複製する (段落の中の段落にも blk と data-n が付いた姿を残すため。
+  // 振る途中で複製すると、外側の段落を元に戻したときに内側の段落が印の無い複製に置き換わり、押せなくなる)
+  blocks.forEach(function (block) { block.orig = block.el.cloneNode(true); });
+
+  // 段落 n の、いま文書にある要素。外側の段落を元に戻すと内側の段落の要素は複製に置き換わるので、番号で探し直す
+  function elementOf(n) {
+    return docEl.querySelector('.blk[data-n="' + n + '"]') || blocks[n - 1].el;
+  }
 
   var comments = [];
   var edits = [];
@@ -344,7 +353,13 @@ const SCRIPT = `
 
   function setText(block, text) {
     if (block.el.tagName !== 'TR') {
-      block.el.textContent = text;
+      // 自分の文字 (直下の文字と強調やコード) だけを置き換え、段落の中の段落 (入れ子の箇条書きなど) は残す
+      var kept = Array.prototype.filter.call(block.el.childNodes, function (node) {
+        return node.nodeType === 1 && !INLINE[node.tagName];
+      });
+      while (block.el.firstChild) block.el.removeChild(block.el.firstChild);
+      block.el.appendChild(document.createTextNode(text));
+      kept.forEach(function (node) { block.el.appendChild(node); });
       return;
     }
     var cells = Array.prototype.slice.call(block.el.children);
@@ -379,6 +394,7 @@ const SCRIPT = `
   function applyEdits() {
     all('.added', docEl).forEach(function (el) { el.parentNode.removeChild(el); });
     blocks.forEach(function (block, index) {
+      block.el = elementOf(index + 1);
       block.el.classList.remove('edited', 'deleted', 'moved');
       var fresh = block.orig.cloneNode(true);
       while (block.el.firstChild) block.el.removeChild(block.el.firstChild);
@@ -613,6 +629,8 @@ const SCRIPT = `
   // 指摘の印、一覧、数を描き直す
   function render() {
     applyEdits();
+    // 元に戻した外側の段落の中では、内側の段落の要素が入れ替わるので、選択中の印を付け直す
+    blocks.forEach(function (block, index) { block.el.classList.toggle('active', !!current && current.block === index + 1); });
     sorted().forEach(function (entry) {
       var block = blocks[entry.comment.block - 1];
       if (!block || !entry.comment.range || block.el.classList.contains('edited')) return;
