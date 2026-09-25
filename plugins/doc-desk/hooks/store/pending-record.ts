@@ -75,6 +75,7 @@ export function parsePendingRecord(value: unknown): PendingRecord | null {
     !isPositiveInteger(record.revision) ||
     !isNonEmptyString(record.token) ||
     !isPositiveInteger(record.port) ||
+    (record.port as number) > 65535 ||
     !isPositiveInteger(record.pid) ||
     typeof record.startedAtMs !== 'number' ||
     !Number.isFinite(record.startedAtMs)

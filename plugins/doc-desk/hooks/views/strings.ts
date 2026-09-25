@@ -46,6 +46,11 @@ export const STRINGS = {
   /** 7 日より古い記録を捨てたとき */
   staleRecordOf: (kind: SheetKind, label: string) =>
     `前回の${sheetNameOf(kind)} ${label} は 7 日より前のものなので、引き継ぎませんでした`,
+  /** 同じフォルダに持ち主のいない記録が複数あり、新しい方だけを引き継いだとき */
+  supersededOf: (kind: SheetKind, label: string) =>
+    `前回の${sheetNameOf(kind)} ${label} は、より新しい待機を引き継いだので引き継ぎませんでした`,
+  /** 待機が同じフォルダの別のセッションに引き継がれ、このセッションが手を引いたときの cancelled の理由 */
+  releasedToOther: '同じフォルダの別のセッションが回答の受け取りを引き継ぎました',
   /** 同じフォルダの別のセッションが待機を持っているとき */
   ownedByOtherOf: (kind: SheetKind, label: string) =>
     `${sheetNameOf(kind)} ${label} は同じフォルダの別のセッションが回答を待っているので、このセッションでは引き継ぎません`,

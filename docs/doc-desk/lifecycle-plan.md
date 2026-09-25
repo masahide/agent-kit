@@ -67,18 +67,20 @@
 ### 動き
 
 ```
-待機を始めるとき        $.store.set("pending:<cwd>", 記録) を書く
-回答が届いた / 取り消し  $.store.delete("pending:<cwd>")
-session.start           記録があれば:
+待機を始めるとき        $.store.set("pending:<cwd>:<セッション id>", 記録) を書く (実装で追記: キーをセッションごとに分けた)
+回答が届いた / 取り消し  $.store.delete("pending:<cwd>:<セッション id>")
+session.start           同じフォルダの記録 (別のセッションが今も持っているものを除く) があれば:
                           .answer.json がある     → 固定形を作り .md に書き、届ける (下の「届け方」)
                           受信サーバが生きている   → pending を組み直し、監視を再開 (ブラウザは開かない)
                           受信サーバが死んでいる   → 同じ port と token で受信サーバを起動し直し、監視を再開
                           .json が無い            → 記録を消す (証跡が消されている)
 ```
 
-当初の案は `session.end` で記録を書く形でしたが、待機を始めた時点で書く方が単純で、Claude が落ちた場合も拾えるので、`session.end` は使いません。
+当初の案は `session.end` で記録を書く形でしたが、待機を始めた時点で書く方が単純で、Claude が落ちた場合も拾えるので、記録は待機を始めた時点で書きます。
 
-記録の中身は `{ kind: "form" | "review", label, documentId, revision, token, port, pid, startedAtMs }` です。画面の情報 (`Sheet`) は `doc-desk/<label>.json` から組み直せるので記録には入れません。キーに `cwd` を含めるのは、`$.store` が plugin ごとに 1 つで、プロジェクトをまたいで共有されるからです。
+(実装で追記) 同じフォルダで同時に動くセッションが同じ待機を引き継がないよう、記録に持ち主のセッション id と heartbeat の時刻を持たせ、別のセッションが今も持っている (heartbeat が 90 秒以内) 記録は引き継ぎません。`session.end` は lease を手放す (heartbeat を 0 に戻す) ためだけに使います。詳しくは README の「引き継ぎ」と plan.md 5 章。
+
+記録の中身は `{ kind: "form" | "review", label, documentId, revision, token, port, pid, startedAtMs }` です (実装で `sessionId` と `heartbeatAtMs` を足した)。画面の情報 (`Sheet`) は `doc-desk/<label>.json` から組み直せるので記録には入れません。キーに `cwd` を含めるのは、`$.store` が plugin ごとに 1 つで、プロジェクトをまたいで共有されるからです。
 
 ### 届け方
 
