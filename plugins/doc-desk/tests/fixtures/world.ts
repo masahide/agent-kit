@@ -37,10 +37,10 @@ export const PANE: RenderInput<'Pane'> = {
 }
 
 /**
- * 人が `/doc-desk` と打ったときの入力。
+ * 人が `/doc-desk-resume` と打ったときの入力。
  */
 export const DESK_COMMAND: Args<'command.run'> = {
-  command: 'doc-desk',
+  command: 'doc-desk-resume',
   args: '',
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 160 },
@@ -149,6 +149,10 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   on('command.register', ($, e) => {
+    // エンジンと同じく、この plugin のスキル /doc-desk:doc-desk の短い形 /doc-desk と重なる名前は断る
+    if (e.name === PLUGIN_NAME) {
+      return { deny: `"/${e.name}" refused: it is the plugin's /${PLUGIN_NAME}:${PLUGIN_NAME}` }
+    }
     registeredCommands.push(e.name)
     return { value: { command: e.name } }
   })

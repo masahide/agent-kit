@@ -87,10 +87,10 @@ describe('render-html', () => {
     expect(html).toContain("fetch('/answer?t=' + encodeURIComponent(token)")
   })
 
-  test('送信に失敗したときの案内は JSON を貼ることだけ (/doc-desk は案内しない)', async () => {
+  test('送信に失敗したときの案内は JSON を貼ることだけ (/doc-desk-resume は案内しない)', async () => {
     const html = renderHtml({ form: Fixtures.FORM, date: DATE })
     expect(html).toContain('下の JSON をそのまま Claude Code のチャットに貼ってください')
-    expect(html).not.toContain('/doc-desk')
+    expect(html).not.toContain('/doc-desk-resume')
   })
 
   test('骨格: 規約コメント、上部バー、構成案の見出し、結論、用語欄、全体の進み具合、下部バー', async () => {

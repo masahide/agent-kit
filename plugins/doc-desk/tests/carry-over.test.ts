@@ -110,7 +110,7 @@ describe('未回答の引き継ぎ', () => {
     expect(world.receiverRuns(), '受信サーバは起動しない').toEqual([])
   })
 
-  test('人がいる surface では勝手に届けず、知らせて /doc-desk を候補に出し、/doc-desk で 1 回だけ送る', async ($, on) => {
+  test('人がいる surface では勝手に届けず、知らせて /doc-desk-resume を候補に出し、/doc-desk-resume で 1 回だけ送る', async ($, on) => {
     const world = Fixtures.world(on, { store: { [BEFORE]: RECORD } })
     leaveEvidence(world.files)
     world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
@@ -122,7 +122,7 @@ describe('未回答の引き継ぎ', () => {
     expect(world.submitted, 'turn を勝手に始めない').toEqual([])
     expect(world.logged).toContain(STRINGS.unsentOf('form', 'spec-auth-01'))
     expect(world.toasts).toEqual([STRINGS.unsentOf('form', 'spec-auth-01')])
-    expect(world.suggested).toEqual(['/doc-desk'])
+    expect(world.suggested).toEqual(['/doc-desk-resume'])
     expect(world.store.has(MINE), '送るまで記録は残す (このセッションのキーに移す)').toBe(true)
     expect(world.store.has(BEFORE)).toBe(false)
 
@@ -135,7 +135,7 @@ describe('未回答の引き継ぎ', () => {
     expect(world.submitted).toHaveLength(1)
   })
 
-  test('/doc-desk で送れなかったら未送に戻し、記録も残す。もう一度 /doc-desk で送れる', async ($, on) => {
+  test('/doc-desk-resume で送れなかったら未送に戻し、記録も残す。もう一度 /doc-desk-resume で送れる', async ($, on) => {
     const world = Fixtures.world(on, { store: { [BEFORE]: RECORD }, refuseSubmits: 1 })
     leaveEvidence(world.files)
     world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
@@ -166,7 +166,7 @@ describe('未回答の引き継ぎ', () => {
     expect(world.store.has(MINE)).toBe(true)
   })
 
-  test('受信サーバが生きていれば起動し直さず監視を再開し、/doc-desk でペインとブラウザが開く', async ($, on) => {
+  test('受信サーバが生きていれば起動し直さず監視を再開し、/doc-desk-resume でペインとブラウザが開く', async ($, on) => {
     const world = Fixtures.world(on, { store: { [BEFORE]: RECORD } })
     leaveEvidence(world.files)
 
@@ -459,8 +459,8 @@ describe('未回答の引き継ぎ', () => {
     await world.clock.advance(500)
 
     expect(world.logged).toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
-    expect(world.toasts, '対話の経路と同じく通知と /doc-desk の候補も出す').toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
-    expect(world.suggested).toEqual(['/doc-desk'])
+    expect(world.toasts, '対話の経路と同じく通知と /doc-desk-resume の候補も出す').toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
+    expect(world.suggested).toEqual(['/doc-desk-resume'])
     expect(world.store.get(MINE)).toMatchObject({ label: 'spec-auth-01' })
     expect(await $.command.run(Fixtures.DESK_COMMAND)).toEqual({ text: STRINGS.sentUnsentOf('form', 'spec-auth-01') })
   })
@@ -490,7 +490,7 @@ describe('未回答の引き継ぎ', () => {
     await world.clock.settle()
     const url = `http://127.0.0.1:${Fixtures.RECEIVER_PORT}/?t=`
     const reopened = await $.command.run(Fixtures.DESK_COMMAND)
-    expect(reopened.text, '/doc-desk は古い回答を送らず、新しい待機を開き直す').toContain(url)
+    expect(reopened.text, '/doc-desk-resume は古い回答を送らず、新しい待機を開き直す').toContain(url)
     await world.clock.settle()
     expect(world.submitted).toEqual([])
   })

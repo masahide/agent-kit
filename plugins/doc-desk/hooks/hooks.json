@@ -1,5 +1,5 @@
 {
-  "description": "doc-desk Mod: open_form と open_review のツールと /doc-desk コマンドの登録、質問票と指摘の画面 (書き上げた文書の HTML) の検証と HTML シートの生成、受信サーバの起動、tool.call の中での回答の同期待ち (/wait のロングポーリング)、監視タイマーによる回答の検知と prompt.submit、待機中のペインの描画、セッションをまたぐ待機の引き継ぎ ($.store)、届いた回答の行の畳み込みと回答先の案内、会話の圧縮での決定の差し戻し、回答が届くまでの対象の文書への書き込みの制止、指摘の画面での Claude 自身の指摘の候補 ($.model.fork)",
+  "description": "doc-desk Mod: open_form と open_review のツールと /doc-desk-resume コマンドの登録、質問票と指摘の画面 (書き上げた文書の HTML) の検証と HTML シートの生成、受信サーバの起動、tool.call の中での回答の同期待ち (/wait のロングポーリング)、監視タイマーによる回答の検知と prompt.submit、待機中のペインの描画、セッションをまたぐ待機の引き継ぎ ($.store)、届いた回答の行の畳み込みと回答先の案内、会話の圧縮での決定の差し戻し、回答が届くまでの対象の文書への書き込みの制止、指摘の画面での Claude 自身の指摘の候補 ($.model.fork)",
   "modules": [
     "./register.ts"
   ]

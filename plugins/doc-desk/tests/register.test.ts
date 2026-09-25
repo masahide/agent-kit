@@ -10,13 +10,13 @@ tier('user')
 const ANSWER_PATH = '/work/doc-desk/spec-auth-01.answer.json'
 
 describe('register', () => {
-  test('session.start でツール open_form と open_review と /doc-desk が登録される', async ($, on) => {
+  test('session.start でツール open_form と open_review と /doc-desk-resume が登録される', async ($, on) => {
     const world = Fixtures.world(on)
 
     await $.session.start(Fixtures.SESSION)
 
     expect(world.registeredTools).toEqual(['open_form', 'open_review'])
-    expect(world.registeredCommands).toEqual(['doc-desk'])
+    expect(world.registeredCommands).toEqual(['doc-desk-resume'])
   })
 
   test('正しい質問票で open_form を呼ぶと、証跡を書き、受信サーバを起動し、waitSeconds: 0 なら待たずに pending を返す', async ($, on) => {
@@ -156,7 +156,7 @@ describe('register', () => {
     })
   })
 
-  test('/doc-desk は待機中ならペインとブラウザを開き直し、待機中でなければその旨を返す', async ($, on) => {
+  test('/doc-desk-resume は待機中ならペインとブラウザを開き直し、待機中でなければその旨を返す', async ($, on) => {
     const world = Fixtures.world(on)
 
     await $.session.start(Fixtures.SESSION)
@@ -175,7 +175,7 @@ describe('register', () => {
     expect(world.opened.at(-1)).toEqual({ id: PANE_ID, title: STRINGS.paneTitle, focus: true })
     expect(
       world.runs.filter(argv => argv.includes(url)),
-      '/doc-desk はブラウザを開き直す',
+      '/doc-desk-resume はブラウザを開き直す',
     ).toHaveLength(1)
   })
 

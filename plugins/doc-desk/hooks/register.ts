@@ -128,7 +128,7 @@ type Pending = {
 }
 
 /**
- * 起動時に見つけた、まだ Claude に送っていない回答。`/doc-desk` で送ります。
+ * 起動時に見つけた、まだ Claude に送っていない回答。`/doc-desk-resume` で送ります。
  */
 type Unsent = {
   sheet: Sheet
@@ -206,7 +206,7 @@ const isAccepted = (result: { drop?: string }): boolean => result.drop === undef
  * 待機は `$.store` の `pending:<cwd>` にも記録し、次の `session.start` で引き継ぎます:
  *
  * ```
- * 記録あり + 回答ファイルあり --人がいる--> unsent (/doc-desk で送る)
+ * 記録あり + 回答ファイルあり --人がいる--> unsent (/doc-desk-resume で送る)
  *                             ---p / SDK--> prompt.submit で届ける
  * 記録あり + 受信サーバが生きている --> waiting(async) (ブラウザもペインも開かない)
  * 記録あり + 受信サーバが死んでいる --> 同じ port と token で起動し直して waiting(async)
@@ -512,7 +512,7 @@ export function register(on: On, options: PluginOptions = {}) {
       if (submitted !== null && isAccepted(submitted)) {
         rememberSettled(current.sheet)
       } else {
-        // 投入が受け付けられなかった。回答を失わないよう、未送として記録を戻し、/doc-desk で送れるようにする
+        // 投入が受け付けられなかった。回答を失わないよう、未送として記録を戻し、/doc-desk-resume で送れるようにする
         if (!pending) {
           unsent = { sheet: current.sheet, reply }
           await saveRecord(engine, current)
@@ -758,7 +758,7 @@ export function register(on: On, options: PluginOptions = {}) {
 
   /**
    * 起動時に見つけた回答を届けます。人がいる surface では勝手に turn を始めず、
-   * `/doc-desk` を候補に出して待ちます (記録は送るまで残します)。
+   * `/doc-desk-resume` を候補に出して待ちます (記録は送るまで残します)。
    */
   async function deliverOnStart(engine: Host, sheet: Sheet, reply: string, isHeadless: boolean) {
     await writeReply(engine, sheet, reply)
@@ -1049,7 +1049,7 @@ export function register(on: On, options: PluginOptions = {}) {
     })
   })
 
-  on('command.run', { command: 'doc-desk' }, async () => {
+  on('command.run', { command: COMMAND_NAME }, async () => {
     const engine = host
     if (!engine) {
       return { text: STRINGS.nothingPending }
