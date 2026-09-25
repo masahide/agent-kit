@@ -40,6 +40,7 @@ import { renderReviewHtml } from './sheet/render-review'
 import {
   HEARTBEAT_INTERVAL_MS,
   isOwnedByOther,
+  LEASE_MS,
   isStale,
   parsePendingRecord,
   recordKeyOf,
@@ -75,7 +76,7 @@ type Paths = {
 /**
  * 待機が終わった理由 (同期待ちの結果 `cancelled` の reason に使います)。
  */
-type DropReason = 'cancelled' | 'replaced'
+type DropReason = 'cancelled' | 'replaced' | 'released'
 
 /**
  * 人に出す画面 1 つ分。質問票 (`open_form`) と指摘の画面 (`open_review`) の違いはここに閉じ込めます。
@@ -175,6 +176,11 @@ function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
 const dateOf = (ms: number): string => new Date(ms).toISOString().slice(0, 10)
 
 /**
+ * `$.prompt.submit` の結果が、投入を受け付けたものか (`{ drop }` で resolve したら受け付けられていない)。
+ */
+const isAccepted = (result: { drop?: string }): boolean => result.drop === undefined
+
+/**
  * doc-desk Mod のフックを登録します。
  *
  * 状態機械 (open_review も open_form と同じ):
@@ -208,6 +214,8 @@ export function register(on: On) {
   let sessionId = ''
   /** このセッションが持っている待機の記録。heartbeat で時刻を進める */
   let ownedRecord: PendingRecord | null = null
+  /** 「別のセッションが待っている」を案内した記録の token (lease が切れる頃にもう一度見るとき、案内を繰り返さない) */
+  const announcedOwnedByOther = new Set<string>()
   let pythonProbe: Promise<readonly string[] | null> | null = null
   let pending: Pending | null = null
   let unsent: Unsent | null = null
@@ -291,8 +299,11 @@ export function register(on: On) {
   }
 
   /**
-   * このセッションが記録を持っていれば heartbeat の時刻を進めます。記録が消えていたら (このセッションが
-   * 止まっている間に lease が切れ、別のセッションが引き継いだ)、受信サーバは止めずに手を引きます。
+   * このセッションが記録を持っていれば heartbeat の時刻を進めます。
+   *
+   * 自分のキーの記録が消えていて、同じ token の記録が別のセッションのキーにあれば (このセッションが止まっている
+   * 間に lease が切れ、別のセッションが引き継いだ)、受信サーバは止めずに手を引きます。そうでなければ
+   * (書き込みの失敗などで消えただけ) 記録を書き直し、届け手がいなくならないようにします。
    */
   async function heartbeat(engine: Host) {
     const owned = ownedRecord
@@ -304,12 +315,16 @@ export function register(on: On) {
     if (ownedRecord !== owned) {
       return
     }
-    if (stored === undefined) {
+    if (stored === undefined && (await isTakenOver(engine, owned))) {
+      if (ownedRecord !== owned) {
+        return
+      }
       ownedRecord = null
       unsent = null
       const current = pending
-      if (current && current.sheet.label === owned.label) {
+      if (current && current.token === owned.token) {
         pending = null
+        current.dropReason = 'released'
         current.timer.cancel()
         engine.status(undefined)
         await closePane(engine)
@@ -322,14 +337,35 @@ export function register(on: On) {
   }
 
   /**
+   * 同じフォルダの別のセッションのキーに、同じ token の記録があるか (その待機が引き継がれたか)。
+   */
+  async function isTakenOver(engine: Host, owned: PendingRecord): Promise<boolean> {
+    const prefix = recordPrefixOf(cwd)
+    const mine = recordKeyOf(cwd, sessionId)
+    for (const key of await engine.storeKeys().catch(() => [] as string[])) {
+      if (!key.startsWith(prefix) || key === mine) {
+        continue
+      }
+      const record = parsePendingRecord(await engine.storeGet(key).catch(() => undefined))
+      if (record && record.token === owned.token && record.sessionId !== sessionId) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
    * 同じフォルダの記録のうち、このセッションが引き継ぐものを 1 つ選びます。別のセッションが今も持っているものは
    * 案内だけ出して飛ばし、形の違うものは消します。残りのうち待機を始めたのが最も新しいものを、キーと一緒に返します。
    */
-  async function recordToCarryOver(engine: Host): Promise<{ key: string; record: PendingRecord } | null> {
+  async function recordToCarryOver(
+    engine: Host,
+  ): Promise<{ chosen: { key: string; record: PendingRecord } | null; leaseEndMs: number | null }> {
     const prefix = recordPrefixOf(cwd)
     const keys = (await engine.storeKeys().catch(() => [] as string[])).filter(key => key.startsWith(prefix))
     const nowMs = await engine.now()
-    let chosen: { key: string; record: PendingRecord } | null = null
+    const free: { key: string; record: PendingRecord }[] = []
+    let leaseEndMs: number | null = null
     for (const key of keys) {
       const record = parsePendingRecord(await engine.storeGet(key).catch(() => undefined))
       if (!record) {
@@ -337,15 +373,26 @@ export function register(on: On) {
         continue
       }
       if (isOwnedByOther(record, sessionId, nowMs)) {
-        // 同じフォルダで動いている別のセッションが待っている。両方で届けたり、取り消しで相手の受信サーバを止めたりしない
-        engine.uiLog(STRINGS.ownedByOtherOf(record.kind, record.label))
+        // 同じフォルダで動いている別のセッションが待っている。両方で届けたり、取り消しで相手の受信サーバを止めたりしない。
+        // 案内は記録ごとに 1 回だけ出す (lease が切れる頃にもう一度見るので)
+        if (!announcedOwnedByOther.has(record.token)) {
+          announcedOwnedByOther.add(record.token)
+          engine.uiLog(STRINGS.ownedByOtherOf(record.kind, record.label))
+        }
+        const end = record.heartbeatAtMs + LEASE_MS
+        leaseEndMs = leaseEndMs === null ? end : Math.min(leaseEndMs, end)
         continue
       }
-      if (!chosen || record.startedAtMs > chosen.record.startedAtMs) {
-        chosen = { key, record }
-      }
+      free.push({ key, record })
     }
-    return chosen
+    free.sort((a, b) => b.record.startedAtMs - a.record.startedAtMs)
+    const [chosen, ...older] = free
+    // 持ち主のいない古い記録は、より新しい待機に差し替わったものとして片付ける (後日また引き継がない)
+    for (const { key, record } of older) {
+      await engine.storeDelete(key).catch(() => undefined)
+      engine.uiLog(STRINGS.supersededOf(record.kind, record.label))
+    }
+    return { chosen: chosen ?? null, leaseEndMs }
   }
 
   function openBrowser(engine: Host, url: string) {
@@ -398,7 +445,6 @@ export function register(on: On) {
    */
   async function settle(engine: Host, sheet: Sheet, reply: string) {
     await writeReply(engine, sheet, reply)
-    rememberSettled(sheet)
     engine.status(undefined)
     await forgetRecord(engine)
     await closePane(engine)
@@ -455,7 +501,17 @@ export function register(on: On) {
       pending = null
       current.timer.cancel()
       await settle(engine, current.sheet, reply)
-      await engine.submitPrompt({ text: reply })
+      const submitted = await engine.submitPrompt({ text: reply }).catch(() => null)
+      if (submitted !== null && isAccepted(submitted)) {
+        rememberSettled(current.sheet)
+      } else {
+        // 投入が受け付けられなかった。回答を失わないよう、未送として記録を戻し、/doc-desk で送れるようにする
+        if (!pending) {
+          unsent = { sheet: current.sheet, reply }
+          await saveRecord(engine, current)
+        }
+        engine.uiLog(STRINGS.unsentFailedOf(current.sheet.kind, current.sheet.label))
+      }
     })()
       .catch((error: unknown) => {
         engine.uiLog(`インタビューの回答を処理できませんでした: ${String(error)}`)
@@ -538,6 +594,10 @@ export function register(on: On) {
     options: { nowMs: number; isBrowserWanted: boolean; waitSeconds: number; signal: AbortSignal },
   ) {
     const { paths } = sheet
+    // 同じ label を出し直すと前回の回答ファイルは消えるので、起動時に見つけた同じ label の未送の回答も捨てる
+    if (unsent?.sheet.label === sheet.label) {
+      unsent = null
+    }
     const python = await pythonOf(engine)
     if (!python) {
       return failed(STRINGS.noPython, sheet)
@@ -579,6 +639,8 @@ export function register(on: On) {
       pending = null
       current.timer.cancel()
       await settle(engine, sheet, end.answer)
+      // 同期経路は Tool result で届くので、ここで数える
+      rememberSettled(sheet)
       return {
         result: JSON.stringify({
           status: 'answered',
@@ -595,7 +657,12 @@ export function register(on: On) {
         result: JSON.stringify({
           status: 'cancelled',
           ...identity,
-          reason: current.dropReason === 'replaced' ? STRINGS.replacedByAnother : STRINGS.cancelledByPerson,
+          reason:
+            current.dropReason === 'replaced'
+              ? STRINGS.replacedByAnother
+              : current.dropReason === 'released'
+                ? STRINGS.releasedToOther
+                : STRINGS.cancelledByPerson,
         }),
       }
     }
@@ -691,7 +758,11 @@ export function register(on: On) {
       // session.start は最初の prompt より前に待たれるので、turn の開始を待たない。
       // 記録は投入が受け付けられてから消す (その前にプロセスが終わっても、次の起動でまた届ける)
       void engine.submitPrompt({ text: reply }).then(
-        () => {
+        result => {
+          if (!isAccepted(result)) {
+            engine.uiLog(STRINGS.unsentFailedOf(sheet.kind, sheet.label))
+            return
+          }
           rememberSettled(sheet)
           return forgetRecord(engine)
         },
@@ -709,8 +780,22 @@ export function register(on: On) {
    * 前のセッションの待機を引き継ぎます (`session.start` から呼びます)。
    */
   async function carryOver(engine: Host, isHeadless: boolean) {
-    const found = await recordToCarryOver(engine)
+    // このセッションがもう自分の待機を持っていれば、引き継ぎで上書きしない
+    if (pending || unsent || ownedRecord) {
+      return
+    }
+    const { chosen: found, leaseEndMs } = await recordToCarryOver(engine)
     if (!found) {
+      if (leaseEndMs !== null) {
+        // 別のセッションが持っている記録がある。そのセッションがクラッシュして session.end が来なかったときに備え、
+        // lease が切れる頃にもう一度見る (持ち主が生きていれば heartbeat で lease が延び、また待つ)
+        const waitMs = Math.max(1000, leaseEndMs - (await engine.now()) + 1000)
+        engine.after(waitMs, () => {
+          void carryOver(engine, isHeadless).catch((error: unknown) => {
+            engine.uiLog(`前回の質問票を引き継げませんでした: ${String(error)}`)
+          })
+        })
+      }
       return
     }
     const { key, record } = found
@@ -915,18 +1000,20 @@ export function register(on: On) {
       // command.run の中の prompt.submit はエンジンが拒む (このコマンドが握る turn を待つことになる) ので、
       // タイマーでコマンドが終わった後に回す。記録は投入が受け付けられてから消し、失敗したら未送に戻す
       engine.after(0, () => {
-        void engine.submitPrompt({ text: waiting.reply }).then(
-          async () => {
-            rememberSettled(waiting.sheet)
-            if (!pending) {
-              await forgetRecord(engine)
-            }
-          },
-          () => {
-            unsent = waiting
-            engine.uiLog(STRINGS.unsentFailedOf(waiting.sheet.kind, waiting.sheet.label))
-          },
-        )
+        const failed = () => {
+          unsent = waiting
+          engine.uiLog(STRINGS.unsentFailedOf(waiting.sheet.kind, waiting.sheet.label))
+        }
+        void engine.submitPrompt({ text: waiting.reply }).then(async result => {
+          if (!isAccepted(result)) {
+            failed()
+            return
+          }
+          rememberSettled(waiting.sheet)
+          if (!pending) {
+            await forgetRecord(engine)
+          }
+        }, failed)
       })
       return { text: STRINGS.sentUnsentOf(waiting.sheet.kind, waiting.sheet.label) }
     }
@@ -1062,6 +1149,16 @@ export function register(on: On) {
     // handle の無い message は「組み立てた文」として読まれる
     const kept = result.messages.filter(message => !isDecisionRecord(message.text))
     return { ...result, messages: [...kept, { role: 'user' as const, text: record, toolUses: [] }] }
+  })
+
+  on('session.end', async ($, e, next) => {
+    // 正常に終わるときは lease を手放す (heartbeat を 0 に戻す)。次のセッションは 90 秒待たずに引き継げる。
+    // /clear ではプロセスが続き、次の heartbeat でまた lease を持つ
+    const owned = ownedRecord
+    if (owned && host) {
+      await host.storeSet(recordKeyOf(cwd, sessionId), { ...owned, heartbeatAtMs: 0 }).catch(() => undefined)
+    }
+    return next(e)
   })
 
   on('ui.close', { id: 'doc-desk' }, async ($, e, next) => {

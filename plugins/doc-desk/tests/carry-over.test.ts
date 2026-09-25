@@ -1,7 +1,7 @@
 import { describe, expect, test, tier } from 'claude-code/testing'
 
 import { FULL_TOOL_NAME, PANE_ID, PLUGIN_NAME } from '../hooks/names'
-import { LEASE_MS, recordKeyOf, recordPrefixOf, type PendingRecord } from '../hooks/store/pending-record'
+import { isOwnedByOther, LEASE_MS, recordKeyOf, recordPrefixOf, type PendingRecord } from '../hooks/store/pending-record'
 import { STRINGS } from '../hooks/views/strings'
 import Fixtures from './fixtures'
 
@@ -368,6 +368,136 @@ describe('未回答の引き継ぎ', () => {
     await $.session.start(Fixtures.SESSION)
     await world.clock.settle()
 
+    expect(world.store.has(BEFORE)).toBe(false)
+    expect(world.receiverRuns()).toEqual([])
+  })
+
+  test('正常に終わるセッションは lease を手放し (heartbeat を 0 に)、次のセッションはすぐ引き継げる', async ($, on) => {
+    const world = Fixtures.world(on)
+    await $.session.start(Fixtures.SESSION)
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+    expect((world.store.get(MINE) as PendingRecord).heartbeatAtMs).toBe(NOW_MS)
+
+    await $.session.end({ reason: 'prompt_input_exit', sessionId: 'session-now', resume: { id: 'session-now' } })
+
+    const released = world.store.get(MINE) as PendingRecord
+    expect(released.heartbeatAtMs).toBe(0)
+    expect(isOwnedByOther(released, 'session-next', NOW_MS + 5000), '5 秒後に起動した別のセッションが引き継げる').toBe(false)
+  })
+
+  test('別のセッションが持っている記録は、lease が切れる頃にもう一度見て、持ち主が止まっていれば引き継ぐ', async ($, on) => {
+    // 持ち主は 10 秒前まで生きていたが、その後クラッシュした (session.end が来ず、heartbeat も進まない)
+    const crashed = { ...RECORD, sessionId: 'session-other', heartbeatAtMs: NOW_MS - 10 * 1000 }
+    const world = Fixtures.world(on, { store: { [OTHER]: crashed } })
+    leaveEvidence(world.files)
+
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+    expect(world.logged).toContain(STRINGS.ownedByOtherOf('form', 'spec-auth-01'))
+    expect(world.statuses).not.toContain(STRINGS.carriedOverOf('form', 'spec-auth-01'))
+
+    await world.clock.advance(LEASE_MS)
+    expect(world.statuses.at(-1)).toBe(STRINGS.carriedOverOf('form', 'spec-auth-01'))
+    expect(world.store.has(OTHER)).toBe(false)
+    expect(world.store.get(MINE)).toMatchObject({ token: 'feedc0de', sessionId: 'session-now' })
+    expect(
+      world.logged.filter(line => line === STRINGS.ownedByOtherOf('form', 'spec-auth-01')),
+      '案内は 1 回だけ',
+    ).toHaveLength(1)
+  })
+
+  test('持ち主が生きていれば (heartbeat が進めば)、lease が切れる頃に見ても引き継がない', async ($, on) => {
+    const live = { ...RECORD, sessionId: 'session-other', heartbeatAtMs: NOW_MS - 10 * 1000 }
+    const world = Fixtures.world(on, { store: { [OTHER]: live } })
+    leaveEvidence(world.files)
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+
+    // 相手のセッションが heartbeat を進めた
+    world.store.set(OTHER, { ...live, heartbeatAtMs: NOW_MS + 60 * 1000 })
+    await world.clock.advance(LEASE_MS)
+    expect(world.store.has(MINE)).toBe(false)
+    expect(world.statuses).not.toContain(STRINGS.carriedOverOf('form', 'spec-auth-01'))
+  })
+
+  test('自分の記録が消えていても、別のセッションが引き継いでいなければ (書き込みの失敗など) 書き直して待ち続ける', async ($, on) => {
+    const world = Fixtures.world(on)
+    await $.session.start(Fixtures.SESSION)
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+
+    world.store.delete(MINE)
+    await world.clock.advance(30 * 1000)
+
+    expect(world.store.get(MINE)).toMatchObject({ label: 'spec-auth-01', sessionId: 'session-now' })
+    expect(world.logged.some(line => line.includes('別のセッション'))).toBe(false)
+    world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+    await world.clock.advance(500)
+    expect(world.submitted.map(submit => submit.text), '回答は届く').toEqual([Fixtures.REPLY_FULL])
+  })
+
+  test('投入が { drop } で断られたら受け付けられていないとみなし、記録を残す (-p と SDK)', async ($, on) => {
+    const world = Fixtures.world(on, { store: { [BEFORE]: RECORD }, dropSubmits: true })
+    leaveEvidence(world.files)
+    world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+
+    await $.session.start(HEADLESS)
+    await world.clock.settle()
+
+    expect(world.store.has(MINE)).toBe(true)
+    expect(world.logged).toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
+  })
+
+  test('監視が届けた回答の投入が断られたら、未送に戻して記録も書き直す', async ($, on) => {
+    const world = Fixtures.world(on, { dropSubmits: true })
+    await $.session.start(Fixtures.SESSION)
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+
+    world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+    await world.clock.advance(500)
+
+    expect(world.logged).toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
+    expect(world.store.get(MINE)).toMatchObject({ label: 'spec-auth-01' })
+    expect(await $.command.run(Fixtures.DESK_COMMAND)).toEqual({ text: STRINGS.sentUnsentOf('form', 'spec-auth-01') })
+  })
+
+  test('持ち主のいない記録が複数あれば、新しいものだけ引き継ぎ、古いものは片付けて伝える', async ($, on) => {
+    const older = { ...RECORD, label: 'old-label', token: 'oldtoken', startedAtMs: RECORD.startedAtMs - 60 * 1000 }
+    const olderKey = recordKeyOf('/work', 'session-older')
+    const world = Fixtures.world(on, { store: { [olderKey]: older, [BEFORE]: RECORD } })
+    leaveEvidence(world.files)
+
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+
+    expect(world.statuses.at(-1)).toBe(STRINGS.carriedOverOf('form', 'spec-auth-01'))
+    expect(world.store.has(olderKey)).toBe(false)
+    expect(world.logged).toContain(STRINGS.supersededOf('form', 'old-label'))
+  })
+
+  test('起動時に見つけた未送の回答は、同じ label を出し直すと捨てる', async ($, on) => {
+    const world = Fixtures.world(on, { store: { [BEFORE]: RECORD } })
+    leaveEvidence(world.files)
+    world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+    const url = `http://127.0.0.1:${Fixtures.RECEIVER_PORT}/?t=`
+    const reopened = await $.command.run(Fixtures.DESK_COMMAND)
+    expect(reopened.text, '/doc-desk は古い回答を送らず、新しい待機を開き直す').toContain(url)
+    await world.clock.settle()
+    expect(world.submitted).toEqual([])
+  })
+
+  test('port が 65535 を超える記録は形が違うものとして消す', async ($, on) => {
+    const world = Fixtures.world(on, { store: { [BEFORE]: { ...RECORD, port: 70000 } } })
+    leaveEvidence(world.files)
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
     expect(world.store.has(BEFORE)).toBe(false)
     expect(world.receiverRuns()).toEqual([])
   })
