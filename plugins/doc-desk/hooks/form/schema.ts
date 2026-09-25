@@ -154,6 +154,8 @@ export const REVIEW_SCHEMA = {
     title: { ...nonEmptyString, description: '画面の上に出す文書の題名' },
     source: {
       type: 'string',
+      minLength: 1,
+      maxLength: 1024,
       description: '元の文書のパス。画面に出し、指摘が届くまで Mod がこのパスと doc-desk/<label>.doc.html への書き込みを止める',
     },
     part: {

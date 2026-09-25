@@ -169,10 +169,12 @@ export function world(on: On, options: WorldOptions = {}) {
     const key = keyOf(e.path)
     const real = options.links?.[key] ?? key
     const text = files.get(real)
-    if (text === undefined) {
+    // ファイルが無くても、その下にファイルがあればフォルダとして答える
+    const isDir = text === undefined && [...files.keys()].some(path => path.startsWith(`${real}/`))
+    if (text === undefined && !isDir) {
       return { deny: `ENOENT: ${e.path}` }
     }
-    const stat = { kind: 'file' as const, size: text.length, mtimeMs: 0, isLink: real !== key }
+    const stat = { kind: isDir ? ('dir' as const) : ('file' as const), size: text?.length ?? 0, mtimeMs: 0, isLink: real !== key }
     return { value: e.resolve ? { ...stat, realPath: real } : stat }
   })
 
@@ -284,7 +286,7 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   // core は答えの文をそのまま返す
-  on('turn.complete', ($, e) => ({ text: e.answer }))
+  on('turn.complete', ($, e) => ({ text: e.answer, ...(e.usage && { usage: e.usage }) }))
 
   on('model.fork', ($, e) => {
     forkPrompts.push(e.prompt)

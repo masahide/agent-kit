@@ -88,7 +88,8 @@ def wait_timeout_of(query):
 def detached_options():
     """親 (Mod の process.run) が終わっても残り、親の出力をつかまない子の起動オプション。
 
-    process.run は子の出力が閉じるまで戻らないので、標準入出力はすべて DEVNULL にします。
+    process.run は子の出力が閉じるまで戻らないので、標準入出力は DEVNULL にします
+    (start は serve の stdout だけを PIPE に差し替え、serve は 1 行書いたらそれを閉じます)。
     Windows は新しいプロセスグループとしてコンソールから切り離し、POSIX は新しいセッションにします。
     """
     options = {'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL, 'close_fds': True}
@@ -271,7 +272,7 @@ def serve(args):
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             super().server_bind()
 
-    server =bind_server(Server, Handler, args.port)
+    server = bind_server(Server, Handler, args.port)
     port = server.server_address[1]
     announce(json.dumps({'port': port, 'pid': os.getpid()}))
 

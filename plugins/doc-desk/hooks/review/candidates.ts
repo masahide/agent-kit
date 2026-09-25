@@ -82,10 +82,16 @@ const CHIPS: ReadonlySet<string> = new Set(REVIEW_CHIPS)
 
 const FENCE = /```(?:json)?\s*\n([\s\S]*?)```/g
 
+/**
+ * 候補の配列として読めるか: JSON の配列で、要素がすべてオブジェクト (空の配列は「候補なし」として読む)。
+ * 前置きの `[1, 2]` や `["S3"]` のような配列は候補の配列とみなさない。
+ */
 const parseArray = (text: string): unknown[] | null => {
   try {
     const value: unknown = JSON.parse(text)
-    return Array.isArray(value) ? value : null
+    return Array.isArray(value) && value.every(item => typeof item === 'object' && item !== null && !Array.isArray(item))
+      ? value
+      : null
   } catch {
     return null
   }

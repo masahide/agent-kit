@@ -18,6 +18,8 @@ describe('receiver', () => {
     expect(parseStartOutput('{"port": 0, "pid": 42}')).toBeNull()
     expect(parseStartOutput('{"port": 1.5, "pid": 42}')).toBeNull()
     expect(parseStartOutput('[50123, 42]')).toBeNull()
+    expect(parseStartOutput('{"port": 65536, "pid": 42}'), 'port は 65535 まで').toBeNull()
+    expect(parseStartOutput('{"port": 65535, "pid": 42}')).toEqual({ port: 65535, pid: 42 })
   })
 
   test('receiverArgv: --port は使いたい port があるときだけ付ける。--port-file は付けない', () => {
@@ -25,5 +27,8 @@ describe('receiver', () => {
     const plain = receiverArgv(['python3'], paths, 'tok')
     expect(plain).toEqual(['python3', '/p/scripts/receiver.py', 'start', '--token', 'tok', '--html', '/w/a.html', '--out', '/w/a.answer.json'])
     expect(receiverArgv(['py', '-3'], paths, 'tok', 50123).slice(-2)).toEqual(['--port', '50123'])
+    for (const bad of [0, 70000, 1.5, Number.NaN]) {
+      expect(receiverArgv(['python3'], paths, 'tok', bad), `使えない port (${bad}) は渡さない`).not.toContain('--port')
+    }
   })
 })

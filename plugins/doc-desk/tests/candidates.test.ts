@@ -102,6 +102,10 @@ describe('自己指摘の候補', () => {
 
     expect(parseCandidates('直すところはありません', 5)).toEqual([])
     expect(
+      parseCandidates(`段落 [1, 2] と ["S3"] が気になります。\n${JSON.stringify(THREE)}`, 5),
+      '前置きの数値や文字列の配列は候補の配列とみなさない',
+    ).toEqual(THREE)
+    expect(
       parseCandidates(`検査 [S3, S15] に当たる段落です。\n${JSON.stringify(THREE)}`, 5),
       '前置きに括弧があっても本体の配列を拾う',
     ).toEqual(THREE)

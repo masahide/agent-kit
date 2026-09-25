@@ -64,6 +64,14 @@ export const STRINGS = {
   guardReasonOf: (label: string, path: string) =>
     `doc-desk: ${label} の回答待ちなので、${path} への書き込みを止めました。この文書への書き込みをやめてターンを終え、` +
     '回答が届くのを待ってください (Bash など別の手段でも書かないでください)。人には「ブラウザで答えるか、/doc-desk で開き直してください」と伝えてください',
+  /** 会話の圧縮で差し戻す決定の記録に足す、回答待ちの注記 */
+  waitingNoteOf: (kind: SheetKind, label: string, url: string) =>
+    `${sheetNameOf(kind)} ${label} は回答待ちです。回答が届くまで対象の文書を書きません。` +
+    `人には、回答先 ${url} で答えるか、/doc-desk で開き直すよう案内してください。`,
+  /** 回答は届いたが Claude に送っていない間に、対象の文書へ書こうとしたときの deny の理由 (モデルが読む) */
+  guardUnsentReasonOf: (label: string, path: string) =>
+    `doc-desk: ${label} の回答は届いていますが、まだ受け取っていないので、${path} への書き込みを止めました。` +
+    'この文書への書き込みをやめてターンを終えてください。人には「/doc-desk で回答を送ってください」と伝えてください',
   /** 会話の圧縮で要約に足す指示 */
   compactInstructions:
     'doc-desk の決定 (【doc-desk 回答】で始まる人の回答) は省略しないでください。決めた項目と選んだ案、指摘と書き換えを残してください。',

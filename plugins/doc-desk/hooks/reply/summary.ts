@@ -12,6 +12,25 @@ export type ReplySummary = {
 
 const FORM_LINE = /^Q(\d+)\. .*?: (?:(\S+) — |\(未選択 = お任せ\))/
 const GLOBAL_NOTE = '全体へのコメント: '
+const PICKED = /^(?:(\S+) — |\(未選択 = お任せ\))/
+
+/**
+ * `Qn.` の行から問いの番号と選んだ案の ID (お任せなら null) を読みます。
+ */
+function pickOf(line: string, titles: readonly string[] | undefined): { n: string; choice: string | null } | null {
+  const n = /^Q(\d+)\. /.exec(line)?.[1]
+  if (n === undefined) {
+    return null
+  }
+  const title = titles?.[Number(n) - 1]
+  if (title !== undefined) {
+    const prefix = `Q${n}. ${title}: `
+    const picked = line.startsWith(prefix) ? PICKED.exec(line.slice(prefix.length)) : null
+    return picked ? { n, choice: picked[1] ?? null } : null
+  }
+  const match = FORM_LINE.exec(line)
+  return match ? { n, choice: match[2] ?? null } : null
+}
 const REVIEW_TARGET = /^対象: \S+/
 const REVIEW_COMMENT = /^#\d+( |$)/
 const REVIEW_EDIT = /^#\d+ (?:書き換え|削除|移動|の後に追加)/
@@ -23,9 +42,13 @@ const REVIEW_EDIT = /^#\d+ (?:書き換え|削除|移動|の後に追加)/
  * - 質問票: `Q1=A  Q2=お任せ  補足 n 件` (補足は問いごとの補足と全体へのコメントの数。0 件なら省く)
  * - 指摘の画面: `指摘 n 件  書き換え m 件` (書き換えは削除、移動、追加も数える。0 件なら省く)
  *
+ * 問いの題 (`titles`) が分かるときは `Qn. <題>: ` を除いた残りから選んだ案を読むので、題に `: A — B` の
+ * ような文字列があっても取り違えません。分からないとき (別のセッションで届いた回答など) は正規表現で読みます。
+ *
  * @param text user turn の本文
+ * @param titles 質問票の問いの題 (並び順)。分からなければ省略
  */
-export function summarizeReply(text: string): ReplySummary | null {
+export function summarizeReply(text: string, titles?: readonly string[]): ReplySummary | null {
   const lines = text.replace(/\r\n/g, '\n').split('\n')
   const head = lines[0] ?? ''
   if (!head.startsWith(REPLY_HEADING)) {
@@ -73,11 +96,11 @@ export function summarizeReply(text: string): ReplySummary | null {
     if (line.startsWith('## ') || line === '---' || line.startsWith(GLOBAL_NOTE)) {
       break
     }
-    const match = FORM_LINE.exec(line)
-    if (!match) {
+    const pick = pickOf(line, titles)
+    if (!pick) {
       return null
     }
-    picks.push(`Q${match[1]}=${match[2] ?? 'お任せ'}`)
+    picks.push(`Q${pick.n}=${pick.choice ?? 'お任せ'}`)
     if (line.includes(' / 補足: ')) {
       notes += 1
     }

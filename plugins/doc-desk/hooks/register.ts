@@ -1,7 +1,7 @@
 import type { On, PluginOptions, Timer } from 'claude-code'
 
 import { parseAnswer } from './form/answer'
-import type { FormV1 } from './form/form-v1'
+import { questionsOf, type FormV1 } from './form/form-v1'
 import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
 import { buildDecisionRecord, isDecisionRecord, type SettledReply } from './compact/record'
@@ -30,7 +30,7 @@ import {
   type ReceiverInfo,
 } from './receiver'
 import { formatReply } from './reply/format'
-import { summarizeReply } from './reply/summary'
+import { summarizeReply, type ReplySummary } from './reply/summary'
 import { parseReviewAnswer } from './review/answer'
 import { candidatePrompt, parseCandidates, wantsSelfReview, type ReviewCandidate } from './review/candidates'
 import { documentErrors, numberedBlocks } from './review/document'
@@ -102,6 +102,8 @@ type Sheet = {
   pendingContext: string
   /** 回答待ちの間、Write / Edit / NotebookEdit を止めるパス (書いたまま。照合のときに正規化する) */
   guardedPaths: string[]
+  /** 回答固定形を畳んだ 1 行の中身 (質問票は問いの題が分かるので、題に紛らわしい文字列があっても読める) */
+  summaryOf: (reply: string) => ReplySummary | null
 }
 
 /**
@@ -148,6 +150,7 @@ function sheetOfForm(form: FormV1, paths: Paths): Sheet {
       const answer = parseAnswer(text, form)
       return answer ? formatReply(form, answer) : null
     },
+    summaryOf: reply => summarizeReply(reply, questionsOf(form).map(question => question.title)),
     files: { form: paths.form, html: paths.html },
     answeredContext: STRINGS.answeredContext,
     pendingContext: STRINGS.toolContext,
@@ -170,6 +173,7 @@ function sheetOfReview(review: ReviewV1, paths: Paths, hasCandidates: boolean): 
       const answer = parseReviewAnswer(text, review)
       return answer ? formatReviewReply(review, answer) : null
     },
+    summaryOf: reply => summarizeReply(reply),
     files: { doc: paths.doc, review: paths.form, html: paths.html, ...(hasCandidates && { candidates: paths.candidates }) },
     answeredContext: STRINGS.reviewAnsweredContext,
     pendingContext: STRINGS.reviewPendingContext,
@@ -228,6 +232,8 @@ export function register(on: On, options: PluginOptions = {}) {
   let elapsedSeconds = 0
   /** このセッションで届けた回答固定形 → 保存した `.md` (畳んだ回答行に出す) */
   const mdPathOfReply = new Map<string, string>()
+  /** このセッションで届けた回答固定形 → 畳んだ 1 行 (質問票の題を知っている画面で作ったもの) */
+  const summaryOfReply = new Map<string, ReplySummary | null>()
   /** このセッションで Claude に届けた回答 (古い順、label ごとに最新の 1 つ)。圧縮で原文を差し戻す */
   let settled: { label: string; mdPath: string }[] = []
 
@@ -458,6 +464,7 @@ export function register(on: On, options: PluginOptions = {}) {
   async function writeReply(engine: Host, sheet: Sheet, reply: string) {
     await engine.writeFile(sheet.paths.md, `${reply}\n`)
     mdPathOfReply.set(reply, sheet.paths.md)
+    summaryOfReply.set(reply, sheet.summaryOf(reply))
   }
 
   /**
@@ -1114,7 +1121,7 @@ export function register(on: On, options: PluginOptions = {}) {
     if (e.props.isExpanded || origin.kind !== 'plugin' || origin.name !== PLUGIN_NAME) {
       return next(e)
     }
-    const summary = summarizeReply(e.props.text)
+    const summary = summaryOfReply.get(e.props.text) ?? summarizeReply(e.props.text)
     if (!summary) {
       return next(e)
     }
@@ -1137,10 +1144,20 @@ export function register(on: On, options: PluginOptions = {}) {
    */
   async function spellingsOf(engine: Host, path: string): Promise<string[]> {
     const normalized = normalizePath(path, cwd)
-    const real = await engine.stat(normalized, { resolve: true }).then(
-      stat => stat.realPath,
-      () => undefined,
-    )
+    const realOf = (target: string) =>
+      engine.stat(target, { resolve: true }).then(
+        stat => stat.realPath,
+        () => undefined,
+      )
+    let real = await realOf(normalized)
+    if (real === undefined) {
+      // まだ無いファイル: 親のフォルダの realPath に名前を足す (シンボリックリンクのフォルダ越しの新規作成を拾う)
+      const slash = normalized.lastIndexOf('/')
+      const parent = slash > 0 ? await realOf(normalized.slice(0, slash)) : undefined
+      if (parent !== undefined) {
+        real = `${parent.replace(/[\\/]+$/, '')}/${normalized.slice(slash + 1)}`
+      }
+    }
     return real === undefined ? [normalized] : [normalized, normalizePath(real, cwd)]
   }
 
@@ -1150,7 +1167,8 @@ export function register(on: On, options: PluginOptions = {}) {
    */
   async function guardWrite(e: { input: unknown; tool_use_id?: string }) {
     const engine = host
-    const current = pending
+    // 回答を待っている間と、届いた回答をまだ Claude に送っていない間 (起動時に見つけた未送の回答) の両方で止める
+    const current = pending ?? unsent
     if (!engine || !current || e.tool_use_id === undefined || current.sheet.guardedPaths.length === 0) {
       return null
     }
@@ -1161,10 +1179,15 @@ export function register(on: On, options: PluginOptions = {}) {
     const targetSpellings = await spellingsOf(engine, target)
     for (const guarded of current.sheet.guardedPaths) {
       if (isSamePath(targetSpellings, await spellingsOf(engine, guarded))) {
-        // 照合の間に回答が届いていれば止めない
-        return pending === current
-          ? { decision: 'deny' as const, reason: STRINGS.guardReasonOf(current.sheet.label, target) }
-          : null
+        // 照合の間に回答が届いていれば (送っていれば) 止めない
+        if ((pending ?? unsent) !== current) {
+          return null
+        }
+        const reason =
+          current === pending
+            ? STRINGS.guardReasonOf(current.sheet.label, target)
+            : STRINGS.guardUnsentReasonOf(current.sheet.label, target)
+        return { decision: 'deny' as const, reason }
       }
     }
     return null

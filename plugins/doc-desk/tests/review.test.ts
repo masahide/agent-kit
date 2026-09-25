@@ -182,4 +182,25 @@ describe('review', () => {
     expect(html).toContain('<h1>&lt;b&gt;&quot;題&quot;&lt;/b&gt;</h1>')
     expect(html).toContain('<span>a&amp;b.md</span>')
   })
+
+  test('validateReview: source は 1〜1024 文字', () => {
+    expect(validateReview({ ...Fixtures.REVIEW, source: 'a'.repeat(1024) }).ok).toBe(true)
+    expect(validateReview({ ...Fixtures.REVIEW, source: 'a'.repeat(1025) })).toEqual({
+      ok: false,
+      errors: ['source: 省略するか、1〜1024 文字の空でない文字列 (元の文書のパス) にしてください'],
+    })
+  })
+
+  test('renderReviewHtml: 候補の文に </script> があっても script を抜け出さない', () => {
+    const html = renderReviewHtml({
+      review: Fixtures.REVIEW,
+      html: Fixtures.DOC_HTML,
+      date: DATE,
+      candidates: [{ block: 1, chip: '削る', quote: '</script><script>alert(1)</script>', text: '</script>x' }],
+    })
+    const json = /<script type="application\/json" id="di-review">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? ''
+    expect(json).not.toContain('</')
+    expect(JSON.parse(json).candidates[0].text).toBe('</script>x')
+    expect(countOf(html, '<script'), 'script 要素は埋め込みの JSON と画面の JS の 2 つだけ').toBe(2)
+  })
 })

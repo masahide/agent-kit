@@ -1,3 +1,5 @@
+import { STRINGS } from '../views/strings'
+
 /**
  * 会話の圧縮 (`session.compact`) の結果に差し戻す「決定の記録」を組みます。
  *
@@ -91,10 +93,7 @@ export function buildDecisionRecord(
   const tail =
     waiting === null
       ? []
-      : [
-          `${waiting.kind === 'form' ? '質問票' : '指摘の画面'} ${waiting.label} は回答待ちです。回答が届くまで対象の文書を書きません。` +
-            `人には、回答先 ${waiting.url} で答えるか、/doc-desk で開き直すよう案内してください。`,
-        ]
+      : [STRINGS.waitingNoteOf(waiting.kind, waiting.label, waiting.url)]
   const compose = (bodies: readonly string[]): string => [RECORD_HEADING, ...bodies, ...tail].join('\n\n')
 
   const full = replies.map(reply => reply.text.replace(/\s+$/, ''))
