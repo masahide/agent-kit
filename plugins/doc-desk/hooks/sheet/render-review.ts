@@ -1,4 +1,6 @@
 import { BLOCK_TAGS, DOCUMENT_ATTRIBUTES, DOCUMENT_TAGS } from '../review/document'
+import type { ReviewCandidate } from '../review/candidates'
+import { CANDIDATE_MARK } from '../review/format'
 import { KEEP_CHIP, REVIEW_CHIPS, type ReviewV1 } from '../review/review-v1'
 import { escapeHtml, safeJson, STYLE } from './common'
 
@@ -12,6 +14,8 @@ export type ReviewSheetInput = {
   html: string
   /** 上部バーに出す日付 (YYYY-MM-DD) */
   date: string
+  /** Claude が自分の文書に付けた指摘の候補 (`review/candidates.ts`)。無ければ省略 */
+  candidates?: readonly ReviewCandidate[]
 }
 
 /**
@@ -83,6 +87,10 @@ const REVIEW_STYLE = `
 .mode input{margin:3px 0 0}
 .mode b{display:block;color:var(--ink);font-size:13px}
 .e-no{flex:none;padding:0 6px;border-radius:4px;background:var(--red-soft);color:var(--red);font:600 11px/20px var(--sans)}
+.doc-body .blk.cand{background:var(--amber-soft)}
+.ctag,.c-src{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;background:var(--amber-soft);color:var(--amber);font:600 11px/18px var(--sans);vertical-align:1px;user-select:none;-webkit-user-select:none}
+.cand-actions{display:flex;flex:none;gap:6px}
+.cand-actions .btn{padding:3px 10px;font-size:12px;font-weight:500}
 `.trim()
 
 /**
@@ -93,6 +101,7 @@ const REVIEW_STYLE = `
  * - 段落 (自分の文字を持つ h2〜h4、p、li、dt、dd と、pre、表の行) に上から番号を振り、押せる領域にする
  * - 段落を押すか、1 つの段落の中で文字列を選ぶと、右に指摘の操作を出す。チップとコメントで指摘を足す
  * - 指摘を付けた段落に、指摘の通し番号の小さな印を付ける。何も選んでいないときは指摘の一覧を出す
+ * - Claude の候補 (data.candidates) を段落の帯と右の一覧に出し、[採用] で指摘に入れ、[却下] で消す
  * - 指摘と全体コメントの下書きを localStorage に保存して復元
  * - [送信] で回答 JSON を `/answer?t=<token>` に POST (token は URL の `?t=` から読む)、失敗時の代替導線
  */
@@ -103,6 +112,7 @@ const SCRIPT = `
   var ATTRIBUTES = ${JSON.stringify(DOCUMENT_ATTRIBUTES)};
   var BLOCKS = ${JSON.stringify(BLOCK_TAGS)};
   var KEEP = ${JSON.stringify(KEEP_CHIP)};
+  var CANDIDATE_MARK = ${JSON.stringify(CANDIDATE_MARK)};
   var INLINE = { STRONG: true, EM: true, CODE: true, SPAN: true, BR: true };
   var data = JSON.parse(document.getElementById('di-review').textContent);
   var review = data.review;
@@ -126,6 +136,10 @@ const SCRIPT = `
   var blockListEl = document.getElementById('di-block-list');
   var editListEl = document.getElementById('di-edit-list');
   var editAllEl = document.getElementById('di-edit-all');
+  var candAllSecEl = document.getElementById('di-cand-all-sec');
+  var candAllEl = document.getElementById('di-cand-all');
+  var candBlockSecEl = document.getElementById('di-cand-block-sec');
+  var candBlockEl = document.getElementById('di-cand-block');
   var editorEl = document.getElementById('di-editor');
   var editorLabelEl = document.getElementById('di-editor-label');
   var editorTextEl = document.getElementById('di-editor-text');
@@ -202,6 +216,18 @@ const SCRIPT = `
     el.setAttribute('title', '段落 ' + n);
   });
 
+  // Claude の候補。quote をまず候補の段落で探し、無ければ全段落で探し、それでも無ければ全体へのコメントの候補にする
+  var candidates = (Array.isArray(data.candidates) ? data.candidates : []).map(function (c) {
+    var quote = typeof c.quote === 'string' ? c.quote : '';
+    var block = blocks[c.block - 1] && (!quote || blocks[c.block - 1].text.indexOf(quote) >= 0) ? c.block : 0;
+    if (!block && quote) {
+      for (var i = 0; i < blocks.length; i += 1) {
+        if (blocks[i].text.indexOf(quote) >= 0) { block = i + 1; break; }
+      }
+    }
+    return { block: block, chip: c.chip, quote: block ? quote : '', text: block || !quote ? c.text : '「' + quote + '」 ' + c.text, state: 'open' };
+  });
+
   var comments = [];
   var edits = [];
   var current = null;
@@ -248,6 +274,12 @@ const SCRIPT = `
     }
     var body = document.createElement('span');
     body.className = 'c-body';
+    if (entry.comment.source === 'claude') {
+      var src = document.createElement('span');
+      src.className = 'c-src';
+      src.textContent = 'Claude の候補';
+      body.appendChild(src);
+    }
     if (entry.comment.chip) {
       var c = document.createElement('span');
       c.className = 'c-chip';
@@ -449,7 +481,7 @@ const SCRIPT = `
   // 文字位置: 段落の中の何文字目か。指摘の番号の印 (.mk) と添削の印 (.etag) の文字は数えない
   function isDecoration(node) {
     var el = node.nodeType === 1 ? node : node.parentNode;
-    return !!(el && el.closest && el.closest('.mk, .etag'));
+    return !!(el && el.closest && el.closest('.mk, .etag, .ctag'));
   }
 
   function charOffset(blockEl, container, offset) {
@@ -458,7 +490,7 @@ const SCRIPT = `
     range.setEnd(container, offset);
     var holder = document.createElement('div');
     holder.appendChild(range.cloneContents());
-    Array.prototype.forEach.call(holder.querySelectorAll('.mk, .etag'), function (el) { el.parentNode.removeChild(el); });
+    Array.prototype.forEach.call(holder.querySelectorAll('.mk, .etag, .ctag'), function (el) { el.parentNode.removeChild(el); });
     return holder.textContent.length;
   }
 
@@ -488,6 +520,96 @@ const SCRIPT = `
     if (no && marks.length > 0) marks[marks.length - 1].setAttribute('data-no', String(no));
   }
 
+  function openCandidates(n) {
+    return candidates.filter(function (c) { return c.state === 'open' && (n === undefined || c.block === n); });
+  }
+
+  function adopt(candidate) {
+    if (candidate.block) {
+      var block = blocks[candidate.block - 1];
+      var at = candidate.quote ? block.orig.textContent.indexOf(candidate.quote) : -1;
+      comments.push({
+        block: candidate.block,
+        chip: candidate.chip,
+        quote: candidate.quote,
+        text: candidate.text,
+        range: at >= 0 ? [at, at + candidate.quote.length] : null,
+        source: 'claude'
+      });
+    } else if (globalEl) {
+      var line = '[' + candidate.chip + '] ' + candidate.text + ' ' + CANDIDATE_MARK;
+      globalEl.value = globalEl.value ? globalEl.value.replace(/\\s+$/, '') + '\\n' + line : line;
+    }
+    candidate.state = 'adopted';
+    saveDraft();
+    render();
+  }
+
+  function reject(candidate) {
+    candidate.state = 'rejected';
+    saveDraft();
+    render();
+  }
+
+  function fillCandidates(listNode, list, withBlock, empty) {
+    while (listNode.firstChild) listNode.removeChild(listNode.firstChild);
+    if (list.length === 0) {
+      var p = document.createElement('p');
+      p.className = 'c-empty';
+      p.textContent = empty;
+      listNode.appendChild(p);
+      return;
+    }
+    var ol = document.createElement('ol');
+    ol.className = 'c-list';
+    list.forEach(function (candidate) {
+      var li = document.createElement('li');
+      li.className = 'c-item';
+      var go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'c-go';
+      if (withBlock) {
+        var at = document.createElement('span');
+        at.className = 'c-at';
+        at.textContent = candidate.block ? '#' + candidate.block : '全体';
+        go.appendChild(at);
+      }
+      var body = document.createElement('span');
+      body.className = 'c-body';
+      var c = document.createElement('span');
+      c.className = 'c-chip';
+      c.textContent = candidate.chip;
+      body.appendChild(c);
+      if (candidate.quote) {
+        var q = document.createElement('span');
+        q.className = 'c-quote';
+        q.textContent = '「' + candidate.quote + '」';
+        body.appendChild(q);
+      }
+      body.appendChild(document.createTextNode(candidate.text));
+      go.appendChild(body);
+      go.addEventListener('click', function () {
+        if (!candidate.block) return;
+        selectBlock(candidate.block, '');
+        reveal(candidate.block);
+      });
+      var actions = document.createElement('span');
+      actions.className = 'cand-actions';
+      [['採用', adopt, 'primary'], ['却下', reject, 'ghost']].forEach(function (spec) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn cand-btn ' + spec[2];
+        button.textContent = spec[0];
+        button.addEventListener('click', function () { spec[1](candidate); });
+        actions.appendChild(button);
+      });
+      li.appendChild(go);
+      li.appendChild(actions);
+      ol.appendChild(li);
+    });
+    listNode.appendChild(ol);
+  }
+
   // 指摘の印、一覧、数を描き直す
   function render() {
     applyEdits();
@@ -501,7 +623,18 @@ const SCRIPT = `
       if (selected) highlight(selected.el, current.range[0], current.range[1], 'sel', 0);
     }
     all('.mk', docEl).forEach(function (el) { el.parentNode.removeChild(el); });
-    blocks.forEach(function (block) { block.el.classList.remove('has', 'keep'); });
+    blocks.forEach(function (block) { block.el.classList.remove('has', 'keep', 'cand'); });
+    blocks.forEach(function (block, index) {
+      if (openCandidates(index + 1).length === 0) return;
+      block.el.classList.add('cand');
+      var host = hostOf(block.el);
+      if (!host) return;
+      var tag = document.createElement('span');
+      tag.className = 'ctag';
+      tag.setAttribute('aria-hidden', 'true');
+      tag.textContent = 'Claude の候補';
+      host.insertBefore(tag, host.firstChild);
+    });
     var byBlock = Object.create(null);
     sorted().forEach(function (entry) { (byBlock[entry.comment.block] = byBlock[entry.comment.block] || []).push(entry); });
     Object.keys(byBlock).forEach(function (key) {
@@ -527,9 +660,14 @@ const SCRIPT = `
     fill(listEl, entries, true, 'まだ指摘はありません。' + HINT);
     var sortedEdits = edits.slice().sort(function (a, b) { return a.block - b.block; });
     fillEdits(editAllEl, sortedEdits, true, '書き換えはまだありません。');
+    candAllSecEl.hidden = candidates.length === 0;
+    fillCandidates(candAllEl, openCandidates(), true, 'Claude の候補はすべて選びました。');
     if (current) {
       fill(blockListEl, entries.filter(function (entry) { return entry.comment.block === current.block; }), false, 'この段落の指摘はまだありません。');
       fillEdits(editListEl, editsOf(current.block), false, 'この段落の書き換えはまだありません。');
+      var here = openCandidates(current.block);
+      candBlockSecEl.hidden = here.length === 0;
+      fillCandidates(candBlockEl, here, false, '');
       var deleted = editsOf(current.block).some(function (edit) { return edit.kind === 'delete'; });
       deleteEl.textContent = deleted ? '消すのをやめる' : 'この段落を消す';
     }
@@ -796,6 +934,7 @@ const SCRIPT = `
       comments: comments.map(function (comment) {
         var item = { block: comment.block, chip: comment.chip, quote: comment.quote, text: comment.text };
         if (comment.range) item.range = comment.range;
+        if (comment.source === 'claude') item.source = 'claude';
         return item;
       }),
       edits: edits.map(function (edit) {
@@ -809,7 +948,9 @@ const SCRIPT = `
   }
 
   function saveDraft() {
-    try { localStorage.setItem(draftKey, JSON.stringify(collect())); } catch (e) { /* 保存できなくても続ける */ }
+    var draft = collect();
+    draft.candidateStates = candidates.map(function (candidate) { return candidate.state; });
+    try { localStorage.setItem(draftKey, JSON.stringify(draft)); } catch (e) { /* 保存できなくても続ける */ }
   }
 
   function restoreDraft() {
@@ -827,7 +968,8 @@ const SCRIPT = `
         quote: typeof comment.quote === 'string' ? comment.quote : '',
         text: typeof comment.text === 'string' ? comment.text : '',
         range: Array.isArray(comment.range) && comment.range.length === 2 &&
-          typeof comment.range[0] === 'number' && typeof comment.range[1] === 'number' ? comment.range : null
+          typeof comment.range[0] === 'number' && typeof comment.range[1] === 'number' ? comment.range : null,
+        source: comment.source === 'claude' ? 'claude' : undefined
       });
     });
     (Array.isArray(saved.edits) ? saved.edits : []).forEach(function (edit) {
@@ -841,6 +983,11 @@ const SCRIPT = `
       }
     });
     if (globalEl && typeof saved.globalNote === 'string') globalEl.value = saved.globalNote;
+    if (Array.isArray(saved.candidateStates) && saved.candidateStates.length === candidates.length) {
+      saved.candidateStates.forEach(function (state, index) {
+        if (state === 'adopted' || state === 'rejected') candidates[index].state = state;
+      });
+    }
   }
 
   function setStatus(text, kind) {
@@ -855,7 +1002,7 @@ const SCRIPT = `
   }
 
   function lock() {
-    all('input, textarea, .chip, .c-del, #di-add, [data-edit], [data-action="editor-ok"], [data-action="move-ok"]').forEach(function (el) { el.disabled = true; });
+    all('input, textarea, .chip, .c-del, .cand-btn, #di-add, [data-edit], [data-action="editor-ok"], [data-action="move-ok"]').forEach(function (el) { el.disabled = true; });
     submitEl.disabled = true;
   }
 
@@ -927,6 +1074,8 @@ function overviewHtml(): string {
     `<div data-stat="edits"><dt>書き換え</dt><dd>0</dd></div>` +
     `<div data-stat="blocks"><dt>指摘した段落</dt><dd>0</dd></div>` +
     `<div data-stat="total"><dt>段落</dt><dd>0</dd></div></dl>` +
+    `<div class="p-sec" id="di-cand-all-sec" hidden><p class="p-label">Claude の候補</p><div id="di-cand-all"></div>` +
+    `<p class="help">Claude が自分で見つけた直しどころです。[採用] で指摘に入り、[却下] で消えます。選ばなかった候補は送りません。</p></div>` +
     `<div class="p-sec"><p class="p-label">指摘の一覧</p><div id="di-list"></div></div>` +
     `<div class="p-sec"><p class="p-label">書き換えの一覧</p><div id="di-edit-all"></div></div>` +
     `<div class="p-sec"><label><span class="p-label">全体へのコメント</span>` +
@@ -950,6 +1099,7 @@ function blockPanelHtml(): string {
     `<div class="add-row"><input type="text" class="note" id="di-text" placeholder="コメント (任意、1 行)" aria-label="コメント">` +
     `<button type="button" class="btn primary" id="di-add" disabled>指摘を足す</button></div>` +
     `<p class="help">チップかコメントのどちらかがあれば足せます。1 つの段落に何件でも付けられます。</p></div>` +
+    `<div class="p-sec" id="di-cand-block-sec" hidden><p class="p-label">Claude の候補</p><div id="di-cand-block"></div></div>` +
     `<div class="p-sec"><p class="p-label">この段落の指摘</p><div id="di-block-list"></div></div>` +
     `<div class="p-sec"><p class="p-label">直接直す</p><div class="edit-actions">` +
     `<button type="button" class="btn ghost" data-edit="rewrite">書き換える</button>` +
@@ -983,7 +1133,7 @@ function blockPanelHtml(): string {
  * @returns HTML 全文
  */
 export function renderReviewHtml(input: ReviewSheetInput): string {
-  const { review, html, date } = input
+  const { review, html, date, candidates = [] } = input
   const part = review.part ? `<span>${review.part.index} / ${review.part.total} 回目</span>` : ''
   const partMeta = review.part ? `<span class="rev">${review.part.index}/${review.part.total}</span>` : ''
   const source = review.source ? `<span>${escapeHtml(review.source)}</span>` : ''
@@ -1032,7 +1182,7 @@ ${blockPanelHtml()}
 <textarea id="di-fallback" readonly></textarea>
 </div>
 </form>
-<script type="application/json" id="di-review">${safeJson({ review, html })}</script>
+<script type="application/json" id="di-review">${safeJson({ review, html, candidates })}</script>
 <script>
 ${SCRIPT}
 </script>

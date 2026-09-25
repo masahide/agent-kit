@@ -1,6 +1,6 @@
 # doc-desk ライフサイクル拡張の実装計画
 
-作成日: 2026-09-24 / 状態: 段階 0 まで実装済み。各段階の記録は [plan.md](plan.md) 5 章にあります。背景と決定の記録は [plan.md](plan.md)、使い方は [usage.md](usage.md)、実装の説明は [plugins/doc-desk/README.md](../../plugins/doc-desk/README.md) にあります。
+作成日: 2026-09-24 / 状態: 段階 5 まで実装済み (8 章のうち実機の確認が要るものは plan.md 5 章と README に残しています)。各段階の記録は [plan.md](plan.md) 5 章にあります。背景と決定の記録は [plan.md](plan.md)、使い方は [usage.md](usage.md)、実装の説明は [plugins/doc-desk/README.md](../../plugins/doc-desk/README.md) にあります。
 
 ## 要点
 
@@ -67,18 +67,20 @@
 ### 動き
 
 ```
-待機を始めるとき        $.store.set("pending:<cwd>", 記録) を書く
-回答が届いた / 取り消し  $.store.delete("pending:<cwd>")
-session.start           記録があれば:
+待機を始めるとき        $.store.set("pending:<cwd>:<セッション id>", 記録) を書く (実装で追記: キーをセッションごとに分けた)
+回答が届いた / 取り消し  $.store.delete("pending:<cwd>:<セッション id>")
+session.start           同じフォルダの記録 (別のセッションが今も持っているものを除く) があれば:
                           .answer.json がある     → 固定形を作り .md に書き、届ける (下の「届け方」)
                           受信サーバが生きている   → pending を組み直し、監視を再開 (ブラウザは開かない)
                           受信サーバが死んでいる   → 同じ port と token で受信サーバを起動し直し、監視を再開
                           .json が無い            → 記録を消す (証跡が消されている)
 ```
 
-当初の案は `session.end` で記録を書く形でしたが、待機を始めた時点で書く方が単純で、Claude が落ちた場合も拾えるので、`session.end` は使いません。
+当初の案は `session.end` で記録を書く形でしたが、待機を始めた時点で書く方が単純で、Claude が落ちた場合も拾えるので、記録は待機を始めた時点で書きます。
 
-記録の中身は `{ kind: "form" | "review", label, documentId, revision, token, port, pid, startedAtMs }` です。画面の情報 (`Sheet`) は `doc-desk/<label>.json` から組み直せるので記録には入れません。キーに `cwd` を含めるのは、`$.store` が plugin ごとに 1 つで、プロジェクトをまたいで共有されるからです。
+(実装で追記) 同じフォルダで同時に動くセッションが同じ待機を引き継がないよう、記録に持ち主のセッション id と heartbeat の時刻を持たせ、別のセッションが今も持っている (heartbeat が 90 秒以内) 記録は引き継ぎません。`session.end` は lease を手放す (heartbeat を 0 に戻す) ためだけに使います。詳しくは README の「引き継ぎ」と plan.md 5 章。
+
+記録の中身は `{ kind: "form" | "review", label, documentId, revision, token, port, pid, startedAtMs }` です (実装で `sessionId` と `heartbeatAtMs` を足した)。画面の情報 (`Sheet`) は `doc-desk/<label>.json` から組み直せるので記録には入れません。キーに `cwd` を含めるのは、`$.store` が plugin ごとに 1 つで、プロジェクトをまたいで共有されるからです。
 
 ### 届け方
 
@@ -100,11 +102,11 @@ session.start           記録があれば:
 
 | ファイル | 変更 |
 |---|---|
-| `hooks/register.ts` | `Sheet` を作る部分を `sheetOfForm(form, paths)` と `sheetOfReview(review, html, paths)` に切り出す (今は 2 つの `tool.call` の中に埋まっている)。`serveSheet` を「受信サーバを起動する」と「待機を組む (`Pending`、監視、ペイン)」に分け、後者を `session.start` からも呼ぶ。`settle` と `dropPending` で記録を消す。`session.start` に上の分岐を足す。`/doc-desk` に「未送の回答を送る」を足す |
+| `hooks/register.ts` | `Sheet` を作る部分を `sheetOfForm(form, paths)` と `sheetOfReview(review, paths)` に切り出す (実装では文書の HTML は `Sheet` に要らなかった) (今は 2 つの `tool.call` の中に埋まっている)。`serveSheet` を「受信サーバを起動する」と「待機を組む (`Pending`、監視、ペイン)」に分け、後者を `session.start` からも呼ぶ。`settle` と `dropPending` で記録を消す。`session.start` に上の分岐を足す。`/doc-desk` に「未送の回答を送る」を足す |
 | `hooks/host/index.ts` | `storeGet`、`storeSet`、`storeDelete`、`toast`、`suggest` を足す |
 | `hooks/store/pending-record.ts` (新規) | 記録の型、読み取り (形が違えば null)、古さの判定 |
 | `hooks/views/strings.ts` | 上の文言 |
-| `tests/register.test.ts` | 下のテスト |
+| `tests/carry-over.test.ts` (新規。計画では `tests/register.test.ts`) | 下のテスト |
 | `usage.md` 4.3〜4.5 章、5 章 | 「閉じても届く」「次の起動で /doc-desk」を書く |
 | `SKILL.md` 手順 5 | `pending` のときの案内に「セッションを閉じても、次の起動で届きます」を足す |
 
@@ -125,7 +127,7 @@ session.start           記録があれば:
 ### 動き
 
 - `ui.render` の `UserMessage` で、`e.props.origin.kind` が `plugin` かつ `e.props.text` が `【doc-desk 回答】` で始まる行だけを描き換えます。他の plugin の投入は `next(e)` で素通しします。`e.props.isExpanded` (ctrl+o) のときも `next(e)` にして全文を出します。
-- 畳んだ行の中身は、質問票なら `【doc-desk 回答】<label>  Q1=B  Q2=お任せ  Q3=A  補足 1 件`、指摘の画面なら `【doc-desk 回答】<label>  指摘 3 件  書き換え 2 件` と、固定形を保存した `.md` のパスです。
+- 畳んだ行の中身は、質問票なら `【doc-desk 回答】<documentId>  Q1=B  Q2=お任せ  Q3=A  補足 1 件`、指摘の画面なら `【doc-desk 回答】<documentId>  指摘 3 件  書き換え 2 件` (見出しは固定形の 1 行目と同じ documentId。実装で label から改めた) と、固定形を保存した `.md` のパスです。
 - `turn.complete` で、`pending` があり、`e.agentId` が無く (main の turn)、`e.reason` が `answer` で、まだその待機で出していなければ、`{ text: "回答先: <url>  (/doc-desk で開き直せます)" }` を返します。1 つの待機につき 1 回だけにします。
 - 回答が届いたとき (`settle`) に `$.ui.toast("回答を受け取りました: <label>")` を出します。
 

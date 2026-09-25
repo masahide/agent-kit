@@ -16,7 +16,7 @@ export type ReviewV1 = {
   label: string
   /** 画面の上に出す文書の題名 */
   title: string
-  /** 元の文書のパス (人に見せるだけ)。省略可 */
+  /** 元の文書のパス。画面に出し、指摘が届くまで Mod がこのパスへの書き込みを止める。省略可 */
   source?: string
   /** 長い文書を分けて出すときの、何回目か (index) と全部で何回か (total)。省略可 */
   part?: { index: number; total: number }
@@ -34,6 +34,8 @@ export type ReviewComment = {
   quote: string
   /** コメント。無ければ空 */
   text: string
+  /** Claude の候補を人が採用した指摘なら `claude`。人が付けた指摘には無い */
+  source?: 'claude'
 }
 
 /**

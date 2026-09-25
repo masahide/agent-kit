@@ -10,6 +10,7 @@ Claude が `mcp__doc-desk__open_form` の `form` に渡す JSON の契約です�
   "documentId": "<文書の識別子>",
   "revision": 1,
   "label": "<証跡ファイル名>",
+  "source": "<これから書く、または更新する文書のパス>",
   "title": "<主張のタイトル>",
   "conclusion": "結論: <3 文以内>",
   "glossary": [ { "term": "<語>", "definition": "<1 行の定義>" } ],
@@ -39,7 +40,7 @@ Claude が `mcp__doc-desk__open_form` の `form` に渡す JSON の契約です�
 }
 ```
 
-必須は `schemaVersion`, `documentId`, `revision`, `label`, `title`, `conclusion`, `outline`, `themes` です。`glossary`, `tables`, `globalNote`, 各問の `note`, 各選択肢の `recommended` と `preview`, 各表の `editable` は省略できます。
+必須は `schemaVersion`, `documentId`, `revision`, `label`, `title`, `conclusion`, `outline`, `themes` です。`source`, `glossary`, `tables`, `globalNote`, 各問の `note`, 各選択肢の `recommended` と `preview`, 各表の `editable` は省略できます。
 
 フォームの左には `title`、`conclusion`、`glossary` と構成案 (`outline`) が出ます。構成案の中の印 (問いと表) を人が押すと、右にその問いの選択肢や表の説明が出ます。
 
@@ -55,6 +56,7 @@ Claude が `mcp__doc-desk__open_form` の `form` に渡す JSON の契約です�
 | `documentId` | 文字列 | `^[A-Za-z0-9_-]{1,64}$`。英数字と `-` と `_` の 1〜64 文字。空白や日本語は不可。同じ文書の質問票は全部同じ値にする。回答固定形の 1 行目 `【doc-desk 回答】<documentId>` に出る | `documentId: 1〜64 文字の英数字と - と _ にしてください` |
 | `revision` | 整数 | 1 以上。同じ文書の何枚目の質問票か。2 枚目は 2 | `revision: 1 以上の整数にしてください` |
 | `label` | 文字列 | `documentId` と同じ文字種と長さ。証跡ファイル名 `doc-desk/<label>.json` などになる。**質問票ごとに変える** (同じ `label` を使い回すと、前の質問票の証跡 `doc-desk/<label>.*` が上書きされる。Mod は起動前に前回の `.answer.json` を消し、`documentId` と `revision` が違う回答は無視するので、古い回答を拾うことはない)。推奨: 1 枚目は `<documentId>`、2 枚目以降は `<documentId>-r<revision>` | `label: 1〜64 文字の英数字と - と _ にしてください` |
+| `source` | 文字列 | 省略可。1〜1024 文字の空でない文字列。これから書く、または更新する文書のパス (cwd 基準の相対か絶対)。書くと、回答が届くまで Mod がこのパスへの `Write`、`Edit`、`NotebookEdit` を止める (理由の文がツールのエラーとして返る)。SKILL.md の手順では常に書く。止めるのは `Write` などの書き込み先がこのパスと同じとき (cwd 基準で正規化し、Windows では大文字小文字を無視) だけで、`Bash` による書き込みや、macOS で大文字小文字だけ違う綴りは拾わない | `source: 省略するか、1〜1024 文字の空でない文字列 (これから書く文書のパス) にしてください` |
 
 ### 結論と用語
 
@@ -155,6 +157,7 @@ Mod は構成案の HTML をそのまま画面に差し込みません。ブラ�
   "documentId": "spec-auth-01",
   "revision": 1,
   "label": "spec-auth-01",
+  "source": "docs/auth.md",
   "title": "認証方式は OIDC に統一する",
   "conclusion": "結論: 認証は OIDC に統一します。自前のセッション管理は捨てます。移行期間は 2 週間です。",
   "glossary": [

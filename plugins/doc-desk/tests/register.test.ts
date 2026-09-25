@@ -524,6 +524,7 @@ describe('register', () => {
         doc: Fixtures.DOC_PATH,
         review: '/work/doc-desk/spec-auth-01-review.json',
         html: '/work/doc-desk/spec-auth-01-review.html',
+        candidates: '/work/doc-desk/spec-auth-01-review.candidates.json',
         answer: REVIEW_ANSWER_PATH,
         md: '/work/doc-desk/spec-auth-01-review.md',
       })
@@ -552,6 +553,7 @@ describe('register', () => {
         doc: Fixtures.DOC_PATH,
         review: '/work/doc-desk/spec-auth-01-review.json',
         html: '/work/doc-desk/spec-auth-01-review.html',
+        candidates: '/work/doc-desk/spec-auth-01-review.candidates.json',
       })
       expect(answered.context).toEqual([STRINGS.reviewPendingContext])
 
