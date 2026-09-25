@@ -129,6 +129,19 @@ describe('圧縮で決定を残す', () => {
     expect(none.messages?.some(message => message.text.startsWith(RECORD_HEADING)), '.md が無ければ足さない').toBe(false)
   })
 
+  test('監視が届けようとした回答の投入が断られたら、Claude に届いていないので記録に入れない', async ($, on) => {
+    const world = Fixtures.world(on, { dropSubmits: true })
+    const core = summarizer(on)
+    await $.session.start(Fixtures.SESSION)
+    await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+    await world.clock.settle()
+    world.files.set(ANSWER_PATH, JSON.stringify(Fixtures.ANSWER_FULL))
+    await world.clock.advance(500)
+
+    const result = await $.session.compact(COMPACT)
+    expect(result.messages).toEqual([core.summary])
+  })
+
   test('届いた回答が無ければ何も変えない', async ($, on) => {
     const world = Fixtures.world(on)
     const core = summarizer(on)

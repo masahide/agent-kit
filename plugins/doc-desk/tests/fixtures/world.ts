@@ -75,6 +75,8 @@ export type WorldOptions = {
   python?: PythonCommand
   /** `GET /wait` の答え。省略時は毎回 `{ answered: false }` (timeout まで回答が無かった) */
   waitReply?: (call: WaitCall) => WaitReply | Promise<WaitReply>
+  /** true なら `$.prompt.submit` を `{ drop }` で断る */
+  dropSubmits?: boolean
   /** 最初のこの回数の `$.prompt.submit` を失敗させる */
   refuseSubmits?: number
   /** `--port` で指定されても取れない (使用中の) port */
@@ -136,6 +138,8 @@ export function world(on: On, options: WorldOptions = {}) {
   on('session.start', ($, e) => ({ cwd: e.cwd }))
 
   on('session.id', () => ({ value: options.sessionId ?? 'session-now' }))
+
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
 
   on('tool.register', ($, e) => {
     registeredTools.push(e.name)
@@ -266,6 +270,10 @@ export function world(on: On, options: WorldOptions = {}) {
       // 投入が受け付けられない (フックが失敗し、下の層も答えないので $.prompt.submit が reject する)
       refusedSubmits += 1
       throw new Error('prompt.submit refused')
+    }
+    if (options.dropSubmits) {
+      // 投入が他のフックに断られた ($.prompt.submit は reject せず { drop } で resolve する)
+      return { drop: 'blocked by a hook' }
     }
     submitted.push(e)
     return { text: e.text, ...(e.context && { context: e.context }) }

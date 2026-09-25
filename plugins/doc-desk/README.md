@@ -100,7 +100,7 @@ sequenceDiagram
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate plugins/doc-desk` の印字:
 
 ```
-❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, tool.check{tool=Write}, tool.check{tool=Edit}, tool.check{tool=NotebookEdit}, session.compact, ui.close{id=doc-desk}
+❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, tool.check{tool=Write}, tool.check{tool=Edit}, tool.check{tool=NotebookEdit}, session.compact, session.end, ui.close{id=doc-desk}
 ```
 
 | event | what the hook does |
@@ -114,6 +114,7 @@ sequenceDiagram
 | `turn.complete` | 待機中で、main の turn (`agentId` なし) が `reason: "answer"` で終わったとき、1 つの待機につき 1 回だけ `{ text: "回答先: <url>  (/doc-desk で開き直せます)" }` を返して答えの下に出す |
 | `tool.check` of `Write`、`Edit`、`NotebookEdit` | 待機中で、実際の呼び出し (`tool_use_id` あり) の書き込み先 (`file_path`、`notebook_path`) が、質問票の `source`、または指摘の画面の `review.source` か `doc-desk/<label>.doc.html` と同じなら `{ decision: "deny", reason: "doc-desk: <label> の回答待ちです。回答が届くまで <path> は書きません。/doc-desk で開き直せます" }` を返す。パスは cwd 基準の絶対パスにし、`\` を `/` に、`..` を解決して比べる (Windows では大文字小文字を無視)。ファイルがあれば `$.fs.stat(path, { resolve: true })` の `realPath` でも比べ、シンボリックリンク越しの書き込みも拾う。それ以外は `next(e)`。`ask` でなく `deny` なのは、人を待たせず、止める理由はモデルに伝われば足りるため |
 | `session.compact` | main の会話 (`agentId` なし) で、このセッションで Claude に届けた回答があるときだけ動く。`next({ ...e, instructions })` で要約に「doc-desk の決定は省略しない」を足し、戻った `messages` の末尾に `【doc-desk 決定の記録】` と各 `doc-desk/<label>.md` の全文を user の message (handle なし) として足す。回答待ちの画面があれば「届くまで対象の文書を書かない」と回答先の URL (圧縮で Tool result と `turn.complete` の行が消えても案内できるように) も足す。前の圧縮 (precompute の再利用を含む) で足した記録が結果に残っていれば除いてから足すので、記録は常に 1 つ。合計 20,000 文字を超えると各回答を決定の部分 (質問票は `Qn.` の行と `## 表`、指摘の画面は `## 指摘` と書き換えの見出し) にし、それでも超えれば新しいものから入れて残りはパスだけ書く。`trigger` が `precompute` でも同じ |
+| `session.end` | このセッションが待機の記録を持っていれば、その `heartbeatAtMs` を 0 に戻して lease を手放す (次のセッションが 90 秒待たずに引き継げる)。`/clear` ではプロセスが続き、次の heartbeat でまた lease を持つ |
 | `ui.close` of `doc-desk` | 人が閉じても監視は続け、状態行に「/doc-desk で開き直せます」を出す |
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
@@ -124,16 +125,18 @@ sequenceDiagram
 
 | 状態 | すること |
 | --- | --- |
-| 別のセッションが今も持っている (持ち主の id が違い、heartbeat が 90 秒以内) | 引き継がず、消しもせず、`$.ui.log` で伝える (両方に回答が届いたり、片方の取り消しで相手の受信サーバを止めたりしない) |
+| 別のセッションが今も持っている (持ち主の id が違い、heartbeat が 90 秒以内) | 引き継がず、消しもせず、`$.ui.log` で 1 回だけ伝える (両方に回答が届いたり、片方の取り消しで相手の受信サーバを止めたりしない)。持ち主がクラッシュして `session.end` が来なかったときに備え、lease が切れる頃にもう一度見る (持ち主が生きていれば lease が延びているので、また待つ) |
 | 形が違う | 記録を消す |
-| 残りのうち、待機を始めたのが最も新しい記録 | このセッションのキーへ移し、下の順に見る |
+| 残りのうち、待機を始めたのが最も新しい記録 | このセッションのキーへ移し、下の順に見る。それより古い持ち主のいない記録は、差し替わったものとして消し、`$.ui.log` で伝える (後日また引き継がない) |
 | 記録が 7 日より古い | 記録を消し、`$.ui.log` で伝える |
 | `doc-desk/<label>.json` が無い、検証を通らない、版が違う | 記録を消す |
 | `.answer.json` がある | 固定形を `.md` に書く。`e.surface` が null (`-p`、SDK) なら `$.prompt.submit` で届け、受け付けられてから記録を消す (その前にプロセスが終わっても次の起動でまた届ける)。人がいれば `$.ui.log` と `$.ui.toast` で知らせ、`$.prompt.suggest` で `/doc-desk` を候補に出し、記録は `/doc-desk` で送るまで残す (送れなければ未送に戻す) |
 | 受信サーバが生きている (`GET /wait?timeout=0` が `{"answered":false}`) | 監視を再開する。ブラウザもペインも開かず、`$.ui.status` に「前回の質問票 <label> が未回答です」(指摘の画面なら「前回の指摘の画面 …」) を出す |
 | 受信サーバに届かない | 同じ token と `--port <記録の port>` で `receiver.py start` を呼び、監視を再開する。同じ port を取れなかったら生死をもう一度見て、古い受信サーバが生きていれば (さっきの確認は一時的な失敗)、起動し直した方を止めて古い方を使う。古い方の pid は他のプロセスに使い回されているかもしれないので止めない。古い方も死んでいれば新しい URL を `$.ui.log` で伝える。`.html` が消えていれば書き直す |
 
-このセッションが止まっている間に lease (90 秒) が切れ、別のセッションが記録を引き継いだときは、heartbeat で記録が消えていることに気付き、受信サーバは止めずに手を引きます。
+このセッションが止まっている間に lease (90 秒) が切れ、別のセッションが記録を引き継いだときは、heartbeat で「自分のキーが消え、同じ token の記録が別のセッションのキーにある」ことに気付き、受信サーバは止めずに手を引きます (同期待ちの最中なら `cancelled` の理由は「別のセッションが引き継ぎました」)。自分のキーが消えていても引き継がれていなければ (書き込みの失敗など)、記録を書き直して待ち続けます。
+
+`$.prompt.submit` は、他のフックに断られると reject せず `{ drop }` で resolve します。これも受け付けられなかったものとして扱い、記録を消さず、未送として `/doc-desk` で送り直せるようにします (監視が届けるときも同じ)。同じ label の画面を出し直したときは、起動時に見つけた同じ label の未送の回答を捨てます (回答ファイルが消えて古くなるため)。
 
 回答 JSON は user turn の隠し context には添えません。Claude Code 2.1.278 では plugin 自身の `prompt.submit` フックがその plugin の `$.prompt.submit` を見ないため (実測、plan.md 4 章 V7)、回答 JSON は `doc-desk/<label>.answer.json` を読んで照合します。
 
