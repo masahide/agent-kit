@@ -20,8 +20,6 @@ import type {
 export type Host = {
   /** `$.clock.now` */
   now: () => Promise<number>
-  /** `$.clock.after` */
-  after: TimerCall
   /** `$.clock.every` */
   every: TimerCall
   /** `$.process.run` */

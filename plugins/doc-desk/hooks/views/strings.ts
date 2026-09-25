@@ -71,8 +71,8 @@ export const STRINGS = {
   unreadableDocument: 'ファイルを読めませんでした。4 MiB を超えているなら、節の切れ目で分けて part を付けてください',
   /** Python 3 が無いときの理由 */
   noPython: 'Python 3 (python3、python、py -3 のどれか) が見つからないため受信サーバを起動できませんでした',
-  /** 受信サーバが port-file を書かなかったときの理由 */
-  noPortFile: '受信サーバが 3 秒以内に起動しませんでした',
+  /** 受信サーバの起動 (receiver.py start) が port を返さなかったときの理由 */
+  noPort: '受信サーバが port を返しませんでした',
   /** 代替導線 */
   fallbackOf: (htmlPath: string) =>
     `HTML は ${htmlPath} に書いてあります。人に file:// で開いて回答してもらい、[送信] で出る JSON をチャットに貼ってもらってください。`,

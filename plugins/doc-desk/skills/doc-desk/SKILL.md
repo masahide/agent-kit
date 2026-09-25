@@ -51,7 +51,7 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 | `pending` | `documentId`, `revision`, `url`, `files: { form, html }`, `wait: { seconds, endedBy }` (`endedBy` は `timeout` = 上限到達、`abort` = 人が中断、`receiverLost` = 受信サーバに届かない、`skipped` = `waitSeconds: 0`)。context に「質問票をブラウザに出しました。回答は後で【doc-desk 回答】で始まる user turn として届きます。それまで文書を書かず、このターンを終えてください。」が付く | ブラウザは Mod が開いています。人に「フォームで答えて [送信] を押してください」と伝え、**ターンを終えます**。回答は user turn として届きます。届いたら手順 6 へ |
 | `cancelled` | `documentId`, `revision`, `reason` (「人が [取り消す] を押しました」か「別の open_form か open_review で差し替えられました」) | 何も届きません。人に取り消しを確認したことを伝え、次の指示を待ちます。質問票を直して出し直すかは人に聞きます |
 | `invalid` | `errors: string[]`。各要素は `<パス>: <直し方>` (例: `themes[0].questions[1].cite: 根拠 (file:line か実行結果の引用) を書いてください。空は不可です`)。エラーは全部まとめて返る | `errors` を全部直して、同じツールをもう一度呼びます。人には見せません。問いの数のエラー (`圧縮してください`) は問いを減らして直します。3 回続けて `invalid` なら、質問票を人に Markdown で見せて相談します |
-| `failed` | `reason`, `files: { form, html }`。`reason` は「Python 3 (python3、python、py -3 のどれか) が見つからないため受信サーバを起動できませんでした」「受信サーバが 3 秒以内に起動しませんでした」「受信サーバを起動できませんでした (...)」のどれかに、「HTML は <絶対パス> に書いてあります。人に file:// で開いて回答してもらい、[送信] で出る JSON をチャットに貼ってもらってください。」が続く | `reason` の代替導線をそのまま人に案内し、ターンを終えます。人が貼った回答 JSON は `references/reply-format-v1.md` の「回答 JSON」の節の形です。Claude が自分で固定形の規則に当てはめて読み、手順 6 へ進みます。`session.start がまだ実行されていません` の `failed` (files 無し) は、セッションを開き直してもらいます |
+| `failed` | `reason`, `files: { form, html }`。`reason` は「Python 3 (python3、python、py -3 のどれか) が見つからないため受信サーバを起動できませんでした」「受信サーバが port を返しませんでした」「受信サーバを起動できませんでした (...)」のどれかに、「HTML は <絶対パス> に書いてあります。人に file:// で開いて回答してもらい、[送信] で出る JSON をチャットに貼ってもらってください。」が続く | `reason` の代替導線をそのまま人に案内し、ターンを終えます。人が貼った回答 JSON は `references/reply-format-v1.md` の「回答 JSON」の節の形です。Claude が自分で固定形の規則に当てはめて読み、手順 6 へ進みます。`session.start がまだ実行されていません` の `failed` (files 無し) は、セッションを開き直してもらいます |
 
 注意:
 
@@ -73,7 +73,6 @@ Mod はセッションの作業ディレクトリの下 `doc-desk/` に、質問
 | `doc-desk/<label>.json` | 検証済みの質問票 (指摘の画面では検証済みの `review`) | Mod |
 | `doc-desk/<label>.doc.html` | 指摘の画面に出す文書の HTML (指摘モードだけ) | Claude |
 | `doc-desk/<label>.html` | 自己完結の HTML シート (`file://` でも開ける) | Mod |
-| `doc-desk/<label>.port.json` | 受信サーバの `{"port", "pid"}` | 受信サーバ |
 | `doc-desk/<label>.answer.json` | ブラウザが送った回答 JSON (同じ label の前回のものは `open_form` が起動前に消す) | 受信サーバ |
 | `doc-desk/<label>.md` | 回答固定形 (`reply` または user turn として届いたものと同じ。末尾に改行 1 つ) | Mod (`failed` で人が回答 JSON を貼ったときは Claude) |
 
