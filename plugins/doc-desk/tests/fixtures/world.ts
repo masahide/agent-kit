@@ -85,6 +85,8 @@ export type WorldOptions = {
   sessionId?: string
   /** `$.store` の初めの中身 (前のセッションが残した記録を模す) */
   store?: Record<string, unknown>
+  /** シンボリックリンク: リンクのパス → 行き先のパス (`fs.stat` の realPath) */
+  links?: Record<string, string>
 }
 
 /**
@@ -159,6 +161,17 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   on('fs.exists', ($, e) => ({ value: files.has(keyOf(e.path)) }))
+
+  on('fs.stat', ($, e) => {
+    const key = keyOf(e.path)
+    const real = options.links?.[key] ?? key
+    const text = files.get(real)
+    if (text === undefined) {
+      return { deny: `ENOENT: ${e.path}` }
+    }
+    const stat = { kind: 'file' as const, size: text.length, mtimeMs: 0, isLink: real !== key }
+    return { value: e.resolve ? { ...stat, realPath: real } : stat }
+  })
 
   on('store.get', ($, e) => ({ value: store.get(e.key) }))
 

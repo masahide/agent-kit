@@ -13,6 +13,11 @@ export type FormV1 = {
   revision: number
   /** 証跡ファイルの名前に使う。`^[A-Za-z0-9_-]{1,64}$` */
   label: string
+  /**
+   * これから書く、または更新する文書のパス (cwd 基準の相対か絶対)。1〜1024 文字。省略可。
+   * 書けば、回答が届くまで Mod がこのパスへの Write / Edit / NotebookEdit を止めます
+   */
+  source?: string
   /** 主張のタイトル (内容の要約ではなく言い切り) */
   title: string
   /** 結論ボックスの本文。「結論:」で始まる 3 文以内 */

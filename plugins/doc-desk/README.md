@@ -65,6 +65,7 @@ sequenceDiagram
 | --- | --- |
 | `hooks/register.ts` | フックの登録と状態機械 (idle → waiting → submitting → idle) |
 | `hooks/host/index.ts` | `session.start` で `$` を束ねた関数群の型 |
+| `hooks/guard/paths.ts` | 回答待ちの書き込みを止めるパスの正規化 (`\` と `/`、`..`、Windows の大文字小文字) と照合 |
 | `hooks/compact/record.ts` | 圧縮の結果に差し戻す `【doc-desk 決定の記録】` の組み立て (文字数の上限と切り詰め) |
 | `hooks/store/pending-record.ts` | `$.store` に残す待機の記録の型、読み取り、古さの判定 (7 日) |
 | `hooks/names.ts` | plugin 名、ツール名、コマンド名、ペイン id、見出し語 |
@@ -98,7 +99,7 @@ sequenceDiagram
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate plugins/doc-desk` の印字:
 
 ```
-❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, session.compact, session.end, ui.close{id=doc-desk}
+❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, tool.check{tool=Write}, tool.check{tool=Edit}, tool.check{tool=NotebookEdit}, session.compact, session.end, ui.close{id=doc-desk}
 ```
 
 | event | what the hook does |
@@ -110,6 +111,7 @@ sequenceDiagram
 | `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
 | `ui.render` of `UserMessage` (`props.origin.kind` が `plugin`) | この Mod (`origin.name` が `doc-desk`) が投入した `【doc-desk 回答】` の行を 1 行に畳む。質問票は `【doc-desk 回答】<documentId>  Q1=A  Q2=お任せ  補足 n 件`、指摘の画面は `指摘 n 件  書き換え m 件`。2 行目に保存した `.md` のパス (このセッションで届けたものだけ) と「ctrl+o で全文」。`isExpanded` (ctrl+o) のとき、固定形として読めないとき、他の plugin や人の行は `next(e)`。描き換えは行の見え方だけで、モデルが読む文は変わらない |
 | `turn.complete` | 待機中で、main の turn (`agentId` なし) が `reason: "answer"` で終わったとき、1 つの待機につき 1 回だけ `{ text: "回答先: <url>  (/doc-desk で開き直せます)" }` を返して答えの下に出す |
+| `tool.check` of `Write`、`Edit`、`NotebookEdit` | 待機中で、実際の呼び出し (`tool_use_id` あり) の書き込み先 (`file_path`、`notebook_path`) が、質問票の `source`、または指摘の画面の `review.source` か `doc-desk/<label>.doc.html` と同じなら `{ decision: "deny", reason: "doc-desk: <label> の回答待ちです。回答が届くまで <path> は書きません。/doc-desk で開き直せます" }` を返す。パスは cwd 基準の絶対パスにし、`\` を `/` に、`..` を解決して比べる (Windows では大文字小文字を無視)。ファイルがあれば `$.fs.stat(path, { resolve: true })` の `realPath` でも比べ、シンボリックリンク越しの書き込みも拾う。それ以外は `next(e)`。`ask` でなく `deny` なのは、人を待たせず、止める理由はモデルに伝われば足りるため |
 | `session.compact` | main の会話 (`agentId` なし) で、このセッションで Claude に届けた回答があるときだけ動く。`next({ ...e, instructions })` で要約に「doc-desk の決定は省略しない」を足し、戻った `messages` の末尾に `【doc-desk 決定の記録】` と各 `doc-desk/<label>.md` の全文を user の message (handle なし) として足す。回答待ちの画面があれば「届くまで対象の文書を書かない」と回答先の URL (圧縮で Tool result と `turn.complete` の行が消えても案内できるように) も足す。前の圧縮 (precompute の再利用を含む) で足した記録が結果に残っていれば除いてから足すので、記録は常に 1 つ。合計 20,000 文字を超えると各回答を決定の部分 (質問票は `Qn.` の行と `## 表`、指摘の画面は `## 指摘` と書き換えの見出し) にし、それでも超えれば新しいものから入れて残りはパスだけ書く。`trigger` が `precompute` でも同じ |
 | `session.end` | このセッションが待機の記録を持っていれば、その `heartbeatAtMs` を 0 に戻して lease を手放す (次のセッションが 90 秒待たずに引き継げる)。`reason` が `clear` か `resume` のときはプロセスが続き監視も続くので、手放さない (手放すと、次の heartbeat までの間に同じフォルダの別のセッションが引き継ぎ、両方で回答を届けてしまう) |
 | `ui.close` of `doc-desk` | 人が閉じても監視は続け、状態行に「/doc-desk で開き直せます」を出す |
@@ -140,11 +142,11 @@ sequenceDiagram
 validate の印字:
 
 ```
-❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.prompt.suggest, $.session.id, $.store.delete, $.store.get, $.store.keys, $.store.set, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
+❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.stat, $.fs.write, $.http.fetch, $.process.run, $.prompt.submit, $.prompt.suggest, $.session.id, $.store.delete, $.store.get, $.store.keys, $.store.set, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
 ```
 
 `clock.after` (`/doc-desk` の後に未送の回答を送る), `clock.every` (回答の監視と、待機の記録の heartbeat), `clock.now`,
-`command.register`, `fs.exists`, `fs.read`, `fs.write`,
+`command.register`, `fs.exists`, `fs.read`, `fs.stat` (書き込みの照合の realPath), `fs.write`,
 `http.fetch` (同期待ちの `GET /wait?t=…&timeout=4` と、引き継ぎの生死確認 `timeout=0`。127.0.0.1 の受信サーバへ),
 `process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
 `prompt.submit`, `prompt.suggest` (起動時に届いていた回答を送る `/doc-desk` を候補に出す),
@@ -248,10 +250,13 @@ Windows で `python3` が Microsoft Store の案内に当たるときは、`pyth
 Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` で listen するので、使用中の port を横取りしません
 (2026-09-24 確認: 使用中の port を指定すると別の port になり、TIME_WAIT だけ残る port は取り直せる)。
 
+書き込みを止める範囲の限界: `tool.check` で見るのは `Write`、`Edit`、`NotebookEdit` の書き込み先だけです。`Bash` の heredoc やリダイレクト (`cat > docs/auth.md`) は拾いません。大文字小文字をそろえて比べるのは Windows のパス (ドライブ名で始まる) だけなので、macOS の既定のファイルシステムのように大文字小文字を区別しない所で、ファイルがまだ無いときに `Docs/Auth.md` のように綴りを変えて書かれると拾えません (ファイルがあれば `realPath` で比べるので拾えることがありますが、`realPath` は大文字小文字の違う綴りをそのまま返すことがあり、確実ではありません)。質問票に `source` が無いときも止めません (SKILL.md の禁則だけになります)。
+
 ## 実機で確かめていないこと (2026-09-23 時点)
 
 - Esc で中断したあと、保留中の `/wait` が戻ってから `pending` を返すまでが `lingerMs` (5 秒) に収まるか。
 - ペインの `Link` (`http://localhost:<port>`) を押したとき、ブラウザが 127.0.0.1 の受信サーバに届くか (`::1` に解決されたときの切り替え。curl では届く)。
 - `waitSeconds` の既定 300 秒の間、ツール呼び出しが進行中のままで、表示や他のフックに問題が出ないか。
 - 引き継ぎ (2026-09-24 時点): `session.start` の中で出した `$.ui.toast` と `$.ui.log` が、terminal と Desktop で見えるか。`$.prompt.suggest` の `/doc-desk` が起動直後のプロンプト欄に薄い候補として出るか (エンジン自身の候補に上書きされないか)。テストキットでは通っています。
+- 書き込みを止める (2026-09-24 時点): `tool.check` の `deny` の `reason` がモデルにそのまま届き、モデルが書き込みをやめるか。
 - 回答行の畳み (2026-09-24 時点): plugin の投入した user turn の行で `ui.render` の `UserMessage` が呼ばれ、畳んだ行が描かれるか。テストキットでは terminal と desktop の両方で通っています。

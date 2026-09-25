@@ -5,6 +5,7 @@ import type { FormV1 } from './form/form-v1'
 import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
 import { buildDecisionRecord, isDecisionRecord, type SettledReply } from './compact/record'
+import { isSamePath, normalizePath, writeTargetOf } from './guard/paths'
 import type { Host } from './host'
 import {
   COMMAND_NAME,
@@ -95,6 +96,8 @@ type Sheet = {
   /** `answered` と `pending` の結果に添える context */
   answeredContext: string
   pendingContext: string
+  /** 回答待ちの間、Write / Edit / NotebookEdit を止めるパス (書いたまま。照合のときに正規化する) */
+  guardedPaths: string[]
 }
 
 /**
@@ -144,6 +147,7 @@ function sheetOfForm(form: FormV1, paths: Paths): Sheet {
     files: { form: paths.form, html: paths.html },
     answeredContext: STRINGS.answeredContext,
     pendingContext: STRINGS.toolContext,
+    guardedPaths: form.source === undefined ? [] : [form.source],
   }
 }
 
@@ -165,6 +169,7 @@ function sheetOfReview(review: ReviewV1, paths: Paths): Sheet {
     files: { doc: paths.doc, review: paths.form, html: paths.html },
     answeredContext: STRINGS.reviewAnsweredContext,
     pendingContext: STRINGS.reviewPendingContext,
+    guardedPaths: [...(review.source === undefined ? [] : [review.source]), paths.doc],
   }
 }
 
@@ -879,6 +884,7 @@ export function register(on: On) {
       writeFile: (path, text) => $.fs.write(path, text),
       readFile: path => $.fs.read(path),
       exists: path => $.fs.exists(path),
+      stat: (path, options) => $.fs.stat(path, options),
       fetch: (url, init) => $.http.fetch(url, init),
       storeGet: key => $.store.get(key),
       storeSet: (key, value) => $.store.set(key, value),
@@ -1089,6 +1095,48 @@ export function register(on: On) {
     current.isUrlShown = true
     return { ...result, text: STRINGS.answerUrlOf(current.url) }
   })
+
+  /**
+   * パスの綴りの集まり: 正規化した綴りと、ファイルがあれば realPath (シンボリックリンク越しの書き込みを拾う)。
+   */
+  async function spellingsOf(engine: Host, path: string): Promise<string[]> {
+    const normalized = normalizePath(path, cwd)
+    const real = await engine.stat(normalized, { resolve: true }).then(
+      stat => stat.realPath,
+      () => undefined,
+    )
+    return real === undefined ? [normalized] : [normalized, normalizePath(real, cwd)]
+  }
+
+  /**
+   * 回答待ちの画面が守るパスへの書き込みなら `deny` を返します。そうでなければ null (`next` に任せる)。
+   * 実際の呼び出し (`tool_use_id` あり) だけを止め、`$.tool.check` の問い合わせには答えません。
+   */
+  async function guardWrite(e: { input: unknown; tool_use_id?: string }) {
+    const engine = host
+    const current = pending
+    if (!engine || !current || e.tool_use_id === undefined || current.sheet.guardedPaths.length === 0) {
+      return null
+    }
+    const target = writeTargetOf(e.input)
+    if (target === null) {
+      return null
+    }
+    const targetSpellings = await spellingsOf(engine, target)
+    for (const guarded of current.sheet.guardedPaths) {
+      if (isSamePath(targetSpellings, await spellingsOf(engine, guarded))) {
+        // 照合の間に回答が届いていれば止めない
+        return pending === current
+          ? { decision: 'deny' as const, reason: STRINGS.guardReasonOf(current.sheet.label, target) }
+          : null
+      }
+    }
+    return null
+  }
+
+  on('tool.check', { tool: 'Write' }, async ($, e, next) => (await guardWrite(e)) ?? next(e))
+  on('tool.check', { tool: 'Edit' }, async ($, e, next) => (await guardWrite(e)) ?? next(e))
+  on('tool.check', { tool: 'NotebookEdit' }, async ($, e, next) => (await guardWrite(e)) ?? next(e))
 
   on('session.compact', async ($, e, next) => {
     const engine = host
