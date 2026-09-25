@@ -1,6 +1,6 @@
 # doc-desk ライフサイクル拡張の実装計画
 
-作成日: 2026-09-24 / 状態: 段階 2 まで実装済み。各段階の記録は [plan.md](plan.md) 5 章にあります。背景と決定の記録は [plan.md](plan.md)、使い方は [usage.md](usage.md)、実装の説明は [plugins/doc-desk/README.md](../../plugins/doc-desk/README.md) にあります。
+作成日: 2026-09-24 / 状態: 段階 3 まで実装済み。各段階の記録は [plan.md](plan.md) 5 章にあります。背景と決定の記録は [plan.md](plan.md)、使い方は [usage.md](usage.md)、実装の説明は [plugins/doc-desk/README.md](../../plugins/doc-desk/README.md) にあります。
 
 ## 要点
 

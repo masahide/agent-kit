@@ -4,6 +4,7 @@ import { parseAnswer } from './form/answer'
 import type { FormV1 } from './form/form-v1'
 import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
+import { buildDecisionRecord, isDecisionRecord, type SettledReply } from './compact/record'
 import type { Host } from './host'
 import {
   COMMAND_NAME,
@@ -217,6 +218,12 @@ export function register(on: On) {
   let elapsedSeconds = 0
   /** このセッションで届けた回答固定形 → 保存した `.md` (畳んだ回答行に出す) */
   const mdPathOfReply = new Map<string, string>()
+  /** このセッションで Claude に届けた回答 (古い順、label ごとに最新の 1 つ)。圧縮で原文を差し戻す */
+  let settled: { label: string; mdPath: string }[] = []
+
+  const rememberSettled = (sheet: Sheet) => {
+    settled = [...settled.filter(entry => entry.label !== sheet.label), { label: sheet.label, mdPath: sheet.paths.md }]
+  }
 
   const pathsOf = (label: string): Paths => {
     const base = `${cwd}/${EVIDENCE_DIR}/${label}`
@@ -484,7 +491,9 @@ export function register(on: On) {
       current.timer.cancel()
       await settle(engine, current.sheet, reply)
       const submitted = await engine.submitPrompt({ text: reply }).catch(() => null)
-      if (submitted === null || !isAccepted(submitted)) {
+      if (submitted !== null && isAccepted(submitted)) {
+        rememberSettled(current.sheet)
+      } else {
         // 投入が受け付けられなかった。回答を失わないよう、未送として記録を戻し、/doc-desk で送れるようにする
         if (!pending) {
           unsent = { sheet: current.sheet, reply }
@@ -621,6 +630,8 @@ export function register(on: On) {
       pending = null
       current.timer.cancel()
       await settle(engine, sheet, end.answer)
+      // 同期経路は Tool result で届くので、ここで数える
+      rememberSettled(sheet)
       return {
         result: JSON.stringify({
           status: 'answered',
@@ -738,7 +749,14 @@ export function register(on: On) {
       // session.start は最初の prompt より前に待たれるので、turn の開始を待たない。
       // 記録は投入が受け付けられてから消す (その前にプロセスが終わっても、次の起動でまた届ける)
       void engine.submitPrompt({ text: reply }).then(
-        result => (isAccepted(result) ? forgetRecord(engine) : engine.uiLog(STRINGS.unsentFailedOf(sheet.kind, sheet.label))),
+        result => {
+          if (!isAccepted(result)) {
+            engine.uiLog(STRINGS.unsentFailedOf(sheet.kind, sheet.label))
+            return
+          }
+          rememberSettled(sheet)
+          return forgetRecord(engine)
+        },
         () => engine.uiLog(STRINGS.unsentFailedOf(sheet.kind, sheet.label)),
       )
       return
@@ -1005,6 +1023,7 @@ export function register(on: On) {
             restoreUnsent()
             return
           }
+          rememberSettled(waiting.sheet)
           if (!pending) {
             await forgetRecord(engine)
           }
@@ -1069,6 +1088,39 @@ export function register(on: On) {
     }
     current.isUrlShown = true
     return { ...result, text: STRINGS.answerUrlOf(current.url) }
+  })
+
+  on('session.compact', async ($, e, next) => {
+    const engine = host
+    if (e.agentId !== undefined || !engine || settled.length === 0) {
+      return next(e)
+    }
+
+    const replies: SettledReply[] = []
+    for (const entry of settled) {
+      const text = await engine.readFile(entry.mdPath).catch(() => null)
+      if (text !== null) {
+        replies.push({ ...entry, text })
+      }
+    }
+    const waiting = pending
+    const record = buildDecisionRecord(
+      replies,
+      waiting ? { kind: waiting.sheet.kind, label: waiting.sheet.label, url: waiting.url } : null,
+    )
+    if (record === null) {
+      return next(e)
+    }
+
+    const instructions = [e.instructions, STRINGS.compactInstructions].filter(Boolean).join('\n\n')
+    const result = await next({ ...e, instructions })
+    if (result.skip !== undefined) {
+      return result
+    }
+    // 前の圧縮 (precompute を含む) で足した記録が残っていれば除いてから、新しい記録を 1 つだけ足す。
+    // handle の無い message は「組み立てた文」として読まれる
+    const kept = result.messages.filter(message => !isDecisionRecord(message.text))
+    return { ...result, messages: [...kept, { role: 'user' as const, text: record, toolUses: [] }] }
   })
 
   on('session.end', async ($, e, next) => {
