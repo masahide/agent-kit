@@ -54,6 +54,12 @@ export const STRINGS = {
   /** 同じフォルダの別のセッションが待機を持っているとき */
   ownedByOtherOf: (kind: SheetKind, label: string) =>
     `${sheetNameOf(kind)} ${label} は同じフォルダの別のセッションが回答を待っているので、このセッションでは引き継ぎません`,
+  /** 畳んだ回答行の 2 行目 */
+  replyRowHintOf: (mdPath: string | undefined) => (mdPath ? `${mdPath}  (ctrl+o で全文)` : 'ctrl+o で全文'),
+  /** 待機中の turn の答えの下に 1 回だけ添える行 */
+  answerUrlOf: (url: string) => `回答先: ${url}  (/doc-desk で開き直せます)`,
+  /** 回答が届いたときの通知 */
+  receivedToastOf: (label: string) => `回答を受け取りました: ${label}`,
   /** 人がペインを閉じたときの状態行 */
   closedHint: '/doc-desk で開き直せます',
   /** [取り消す] のあとのトランスクリプト行 */

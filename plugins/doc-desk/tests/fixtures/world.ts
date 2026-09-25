@@ -267,6 +267,9 @@ export function world(on: On, options: WorldOptions = {}) {
     return { text: e.text, ...(e.context && { context: e.context }) }
   })
 
+  // core は答えの文をそのまま返す
+  on('turn.complete', ($, e) => ({ text: e.answer }))
+
   on('ui.toast', ($, e) => {
     toasts.push(e.text)
     return { value: undefined }

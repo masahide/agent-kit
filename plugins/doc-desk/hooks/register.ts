@@ -9,6 +9,7 @@ import {
   COMMAND_NAME,
   EVIDENCE_DIR,
   PANE_ID,
+  PLUGIN_NAME,
   REVIEW_TOOL_NAME,
   TOOL_NAME,
 } from './names'
@@ -26,6 +27,7 @@ import {
   type ReceiverInfo,
 } from './receiver'
 import { formatReply } from './reply/format'
+import { summarizeReply } from './reply/summary'
 import { parseReviewAnswer } from './review/answer'
 import { documentErrors } from './review/document'
 import { formatReviewReply } from './review/format'
@@ -44,6 +46,7 @@ import {
   type PendingRecord,
 } from './store/pending-record'
 import { paneView } from './views/pane-view'
+import { replyRow } from './views/reply-row'
 import { STRINGS } from './views/strings'
 import { clampWaitSeconds, waitForAnswer } from './wait/sync-wait'
 
@@ -110,6 +113,8 @@ type Pending = {
   isSyncWaiting: boolean
   /** `dropPending` で片付けられたときの理由 */
   dropReason: DropReason | null
+  /** `turn.complete` で回答先の URL を添えたか (1 つの待機につき 1 回) */
+  isUrlShown: boolean
 }
 
 /**
@@ -210,6 +215,8 @@ export function register(on: On) {
   let unsent: Unsent | null = null
   let isPaneOpen = false
   let elapsedSeconds = 0
+  /** このセッションで届けた回答固定形 → 保存した `.md` (畳んだ回答行に出す) */
+  const mdPathOfReply = new Map<string, string>()
 
   const pathsOf = (label: string): Paths => {
     const base = `${cwd}/${EVIDENCE_DIR}/${label}`
@@ -419,11 +426,20 @@ export function register(on: On) {
    * 同期経路はこの文を Tool result で、非同期経路は `prompt.submit` で Claude に届けます。
    */
   async function settle(engine: Host, sheet: Sheet, reply: string) {
-    await engine.writeFile(sheet.paths.md, `${reply}\n`)
+    await writeReply(engine, sheet, reply)
     engine.status(undefined)
     await forgetRecord(engine)
     await closePane(engine)
     engine.uiLog(STRINGS.receivedOf(sheet.paths.md))
+    engine.toast(STRINGS.receivedToastOf(sheet.label))
+  }
+
+  /**
+   * 回答固定形を `<label>.md` に書き、畳んだ回答行のために覚えます。
+   */
+  async function writeReply(engine: Host, sheet: Sheet, reply: string) {
+    await engine.writeFile(sheet.paths.md, `${reply}\n`)
+    mdPathOfReply.set(reply, sheet.paths.md)
   }
 
   /**
@@ -530,6 +546,7 @@ export function register(on: On) {
       isChecking: false,
       isSyncWaiting: options.isSyncWaiting,
       dropReason: null,
+      isUrlShown: false,
     }
     current.timer = engine.every(WATCH_INTERVAL_MS, () => tick(engine, current))
     pending = current
@@ -715,7 +732,7 @@ export function register(on: On) {
    * `/doc-desk` を候補に出して待ちます (記録は送るまで残します)。
    */
   async function deliverOnStart(engine: Host, sheet: Sheet, reply: string, isHeadless: boolean) {
-    await engine.writeFile(sheet.paths.md, `${reply}\n`)
+    await writeReply(engine, sheet, reply)
     if (isHeadless) {
       engine.uiLog(STRINGS.receivedOf(sheet.paths.md))
       // session.start は最初の prompt より前に待たれるので、turn の開始を待たない。
@@ -1029,6 +1046,29 @@ export function register(on: On) {
         },
       },
     )
+  })
+
+  on('ui.render', { component: 'UserMessage', props: { origin: { kind: 'plugin' } } }, ($, e, next) => {
+    const { origin } = e.props
+    if (e.props.isExpanded || origin.kind !== 'plugin' || origin.name !== PLUGIN_NAME) {
+      return next(e)
+    }
+    const summary = summarizeReply(e.props.text)
+    if (!summary) {
+      return next(e)
+    }
+    const { Box, Text } = $.ui.resolve(e)
+    return replyRow({ Box, Text }, summary, mdPathOfReply.get(e.props.text))
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+    const current = pending
+    if (e.agentId !== undefined || e.reason !== 'answer' || !current || current.isUrlShown) {
+      return result
+    }
+    current.isUrlShown = true
+    return { ...result, text: STRINGS.answerUrlOf(current.url) }
   })
 
   on('session.end', async ($, e, next) => {
