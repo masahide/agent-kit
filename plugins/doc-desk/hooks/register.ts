@@ -350,12 +350,12 @@ export function register(on: On) {
   }
 
   /**
-   * 同じフォルダの記録のうち、このセッションが引き継ぐものを 1 つ選びます。別のセッションが今も持っているものは
-   * 案内だけ出して飛ばし、形の違うものは消します。残りのうち待機を始めたのが最も新しいものを、キーと一緒に返します。
+   * 同じフォルダの記録のうち、このセッションが引き継げるものを探します。別のセッションが今も持っているものは
+   * 案内だけ出して飛ばし、形の違うものは消します。残りを待機を始めたのが新しい順に、キーと一緒に返します。
    */
   async function recordToCarryOver(
     engine: Host,
-  ): Promise<{ chosen: { key: string; record: PendingRecord } | null; leaseEndMs: number | null }> {
+  ): Promise<{ candidates: { key: string; record: PendingRecord }[]; leaseEndMs: number | null }> {
     const prefix = recordPrefixOf(cwd)
     const keys = (await engine.storeKeys().catch(() => [] as string[])).filter(key => key.startsWith(prefix))
     const nowMs = await engine.now()
@@ -381,13 +381,7 @@ export function register(on: On) {
       free.push({ key, record })
     }
     free.sort((a, b) => b.record.startedAtMs - a.record.startedAtMs)
-    const [chosen, ...older] = free
-    // 持ち主のいない古い記録は、より新しい待機に差し替わったものとして片付ける (後日また引き継がない)
-    for (const { key, record } of older) {
-      await engine.storeDelete(key).catch(() => undefined)
-      engine.uiLog(STRINGS.supersededOf(record.kind, record.label))
-    }
-    return { chosen: chosen ?? null, leaseEndMs }
+    return { candidates: free, leaseEndMs }
   }
 
   function openBrowser(engine: Host, url: string) {
@@ -506,6 +500,8 @@ export function register(on: On) {
           await saveRecord(engine, current)
         }
         engine.uiLog(STRINGS.unsentFailedOf(current.sheet.kind, current.sheet.label))
+        engine.toast(STRINGS.unsentFailedOf(current.sheet.kind, current.sheet.label))
+        void engine.suggest({ text: `/${COMMAND_NAME}` }).catch(() => undefined)
       }
     })()
       .catch((error: unknown) => {
@@ -772,6 +768,41 @@ export function register(on: On) {
   }
 
   /**
+   * 引き継ぎの候補を新しい順に試し、最初に使えるものをこのセッションの記録にします。
+   *
+   * 先にこのセッションのキーへ書いてから前のキーを消します (逆の順だと、その間に lease の切れた持ち主の heartbeat が
+   * 「引き継がれていない」と判断して書き直し、両方が記録を持ってしまう)。古い、または証跡の無い候補は消して次を試し、
+   * 使える候補が決まったら、それより古い候補は差し替わったものとして片付けます (後日また引き継がない)。
+   */
+  async function claimFirstUsable(
+    engine: Host,
+    candidates: readonly { key: string; record: PendingRecord }[],
+  ): Promise<{ record: PendingRecord; sheet: Sheet } | null> {
+    for (const [index, { key, record }] of candidates.entries()) {
+      if (isStale(record, await engine.now())) {
+        await engine.storeDelete(key).catch(() => undefined)
+        engine.uiLog(STRINGS.staleRecordOf(record.kind, record.label))
+        continue
+      }
+      const sheet = await sheetOfRecord(engine, record)
+      if (!sheet) {
+        await engine.storeDelete(key).catch(() => undefined)
+        continue
+      }
+      await claimRecord(engine, record)
+      if (key !== recordKeyOf(cwd, sessionId)) {
+        await engine.storeDelete(key).catch(() => undefined)
+      }
+      for (const older of candidates.slice(index + 1)) {
+        await engine.storeDelete(older.key).catch(() => undefined)
+        engine.uiLog(STRINGS.supersededOf(older.record.kind, older.record.label))
+      }
+      return { record, sheet }
+    }
+    return null
+  }
+
+  /**
    * 前のセッションの待機を引き継ぎます (`session.start` から呼びます)。
    */
   async function carryOver(engine: Host, isHeadless: boolean) {
@@ -779,7 +810,8 @@ export function register(on: On) {
     if (pending || unsent || ownedRecord) {
       return
     }
-    const { chosen: found, leaseEndMs } = await recordToCarryOver(engine)
+    const { candidates, leaseEndMs } = await recordToCarryOver(engine)
+    const found = await claimFirstUsable(engine, candidates)
     if (!found) {
       if (leaseEndMs !== null) {
         // 別のセッションが持っている記録がある。そのセッションがクラッシュして session.end が来なかったときに備え、
@@ -793,19 +825,7 @@ export function register(on: On) {
       }
       return
     }
-    const { key, record } = found
-    // 前のセッションのキーから、このセッションのキーへ移す (以後はこのセッションの記録)
-    await engine.storeDelete(key).catch(() => undefined)
-    if (isStale(record, await engine.now())) {
-      engine.uiLog(STRINGS.staleRecordOf(record.kind, record.label))
-      return
-    }
-
-    const sheet = await sheetOfRecord(engine, record)
-    if (!sheet) {
-      return
-    }
-    await claimRecord(engine, record)
+    const { record, sheet } = found
 
     const reply = await readReply(engine, sheet)
     if (reply !== null) {
@@ -994,20 +1014,20 @@ export function register(on: On) {
       // command.run の中の prompt.submit はエンジンが拒む (このコマンドが握る turn を待つことになる) ので、
       // タイマーでコマンドが終わった後に回す。記録は投入が受け付けられてから消し、失敗したら未送に戻す
       engine.after(0, () => {
-        const failed = () => {
+        const restoreUnsent = () => {
           unsent = waiting
           engine.uiLog(STRINGS.unsentFailedOf(waiting.sheet.kind, waiting.sheet.label))
         }
         void engine.submitPrompt({ text: waiting.reply }).then(async result => {
           if (!isAccepted(result)) {
-            failed()
+            restoreUnsent()
             return
           }
           rememberSettled(waiting.sheet)
           if (!pending) {
             await forgetRecord(engine)
           }
-        }, failed)
+        }, restoreUnsent)
       })
       return { text: STRINGS.sentUnsentOf(waiting.sheet.kind, waiting.sheet.label) }
     }
@@ -1105,7 +1125,11 @@ export function register(on: On) {
 
   on('session.end', async ($, e, next) => {
     // 正常に終わるときは lease を手放す (heartbeat を 0 に戻す)。次のセッションは 90 秒待たずに引き継げる。
-    // /clear ではプロセスが続き、次の heartbeat でまた lease を持つ
+    // /clear と resume ではプロセスが続き、監視も続くので手放さない (手放すと、次の heartbeat までの間に
+    // 同じフォルダの別のセッションが引き継ぎ、両方で回答を届けてしまう)
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      return next(e)
+    }
     const owned = ownedRecord
     if (owned && host) {
       await host.storeSet(recordKeyOf(cwd, sessionId), { ...owned, heartbeatAtMs: 0 }).catch(() => undefined)

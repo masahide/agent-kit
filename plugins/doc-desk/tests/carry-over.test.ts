@@ -459,6 +459,8 @@ describe('未回答の引き継ぎ', () => {
     await world.clock.advance(500)
 
     expect(world.logged).toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
+    expect(world.toasts, '対話の経路と同じく通知と /doc-desk の候補も出す').toContain(STRINGS.unsentFailedOf('form', 'spec-auth-01'))
+    expect(world.suggested).toEqual(['/doc-desk'])
     expect(world.store.get(MINE)).toMatchObject({ label: 'spec-auth-01' })
     expect(await $.command.run(Fixtures.DESK_COMMAND)).toEqual({ text: STRINGS.sentUnsentOf('form', 'spec-auth-01') })
   })
@@ -500,5 +502,47 @@ describe('未回答の引き継ぎ', () => {
     await world.clock.settle()
     expect(world.store.has(BEFORE)).toBe(false)
     expect(world.receiverRuns()).toEqual([])
+  })
+
+  for (const reason of ['clear', 'resume'] as const) {
+    test(`session.end の reason が ${reason} ならプロセスが続くので lease を手放さない`, async ($, on) => {
+      const world = Fixtures.world(on)
+      await $.session.start(Fixtures.SESSION)
+      await $.tool.call({ tool: FULL_TOOL_NAME, form: Fixtures.FORM, openBrowser: false, waitSeconds: 0 })
+      await world.clock.settle()
+
+      await $.session.end({ reason, sessionId: 'session-now', resume: { id: 'session-now' } })
+
+      expect((world.store.get(MINE) as PendingRecord).heartbeatAtMs).toBe(NOW_MS)
+    })
+  }
+
+  test('引き継ぐときは先に自分のキーへ書いてから前のキーを消す (間に持ち主の heartbeat が走っても二重にならない)', async ($, on) => {
+    const world = Fixtures.world(on, { store: { [BEFORE]: RECORD } })
+    leaveEvidence(world.files)
+
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+
+    const setMine = world.storeOps.indexOf(`set ${MINE}`)
+    const deleteBefore = world.storeOps.indexOf(`delete ${BEFORE}`)
+    expect(setMine).toBeGreaterThanOrEqual(0)
+    expect(deleteBefore).toBeGreaterThan(setMine)
+  })
+
+  test('最新の記録が使えなければ (証跡が無い)、次に新しい記録を引き継ぐ', async ($, on) => {
+    const newer = { ...RECORD, label: 'gone-label', token: 'gonetoken', startedAtMs: RECORD.startedAtMs + 60 * 1000 }
+    const newerKey = recordKeyOf('/work', 'session-newer')
+    const world = Fixtures.world(on, { store: { [newerKey]: newer, [BEFORE]: RECORD } })
+    leaveEvidence(world.files)
+
+    await $.session.start(Fixtures.SESSION)
+    await world.clock.settle()
+
+    expect(world.statuses.at(-1)).toBe(STRINGS.carriedOverOf('form', 'spec-auth-01'))
+    expect(world.store.has(newerKey)).toBe(false)
+    expect(world.store.has(BEFORE)).toBe(false)
+    expect(world.store.get(MINE)).toMatchObject({ token: 'feedc0de' })
+    expect(world.logged.some(line => line.includes('より新しい待機')), '使えなかった記録は「差し替わった」とは言わない').toBe(false)
   })
 })
