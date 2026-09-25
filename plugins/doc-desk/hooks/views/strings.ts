@@ -1,6 +1,14 @@
 /**
  * Mod が描く固定文言。ja-text-communication の規範に沿って一文一義で書きます。
  */
+/**
+ * 画面の種類。`form` は質問票 (`open_form`)、`review` は指摘の画面 (`open_review`)。
+ */
+export type SheetKind = 'form' | 'review'
+
+/** 画面の種類の呼び名 */
+export const sheetNameOf = (kind: SheetKind): string => (kind === 'form' ? '質問票' : '指摘の画面')
+
 export const STRINGS = {
   /** ペインのタイトル */
   paneTitle: 'doc-desk',
@@ -22,6 +30,30 @@ export const STRINGS = {
   nothingPending: '待機中の質問票も指摘の画面もありません',
   /** 待機中に `/doc-desk` を実行したときの返答 */
   reopenedOf: (url: string) => `インタビューのペインとブラウザを開き直しました: ${url}`,
+  /** 起動時に、前のセッションの回答が届いていたとき (トランスクリプト行と通知) */
+  unsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答が届いています。/doc-desk で Claude に送れます`,
+  /** 未送の回答を `/doc-desk` で送ったときの返答 */
+  sentUnsentOf: (kind: SheetKind, label: string) => `${sheetNameOf(kind)} ${label} の回答を Claude に送ります`,
+  /** 未送の回答を送れなかったとき */
+  unsentFailedOf: (kind: SheetKind, label: string) =>
+    `${sheetNameOf(kind)} ${label} の回答を送れませんでした。/doc-desk でもう一度送れます`,
+  /** 起動時に、前のセッションの待機を引き継いだときの状態行 */
+  carriedOverOf: (kind: SheetKind, label: string) => `前回の${sheetNameOf(kind)} ${label} が未回答です。/doc-desk で開き直せます`,
+  /** 引き継いで受信サーバを起動し直したら port が変わったとき */
+  portChangedOf: (kind: SheetKind, label: string, url: string) => `${sheetNameOf(kind)} ${label} の URL が変わりました: ${url}`,
+  /** 引き継いで受信サーバを起動し直せなかったとき */
+  restartFailedOf: (kind: SheetKind, label: string) => `前回の${sheetNameOf(kind)} ${label} の受信サーバを起動し直せませんでした`,
+  /** 7 日より古い記録を捨てたとき */
+  staleRecordOf: (kind: SheetKind, label: string) =>
+    `前回の${sheetNameOf(kind)} ${label} は 7 日より前のものなので、引き継ぎませんでした`,
+  /** 同じフォルダに持ち主のいない記録が複数あり、新しい方だけを引き継いだとき */
+  supersededOf: (kind: SheetKind, label: string) =>
+    `前回の${sheetNameOf(kind)} ${label} は、より新しい待機を引き継いだので引き継ぎませんでした`,
+  /** 待機が同じフォルダの別のセッションに引き継がれ、このセッションが手を引いたときの cancelled の理由 */
+  releasedToOther: '同じフォルダの別のセッションが回答の受け取りを引き継ぎました',
+  /** 同じフォルダの別のセッションが待機を持っているとき */
+  ownedByOtherOf: (kind: SheetKind, label: string) =>
+    `${sheetNameOf(kind)} ${label} は同じフォルダの別のセッションが回答を待っているので、このセッションでは引き継ぎません`,
   /** 人がペインを閉じたときの状態行 */
   closedHint: '/doc-desk で開き直せます',
   /** [取り消す] のあとのトランスクリプト行 */
@@ -64,7 +96,7 @@ export const STRINGS = {
     '結果の status は open_form と同じです。"answered" なら reply の ## 指摘 を反映して文書を直してください。' +
     '"pending" なら指摘は後で【doc-desk 回答】で始まる user turn として届くので、文書を直さずにターンを終えてください。',
   /** コマンドの説明 */
-  commandDescription: '待機中の質問票か指摘の画面の、ペインとブラウザを開き直す',
+  commandDescription: '待機中の質問票か指摘の画面を開き直す。前回の回答が未送なら Claude に送る',
   /** 文書の HTML ファイルが無いとき */
   noDocument: 'ファイルがありません。書き上げた文書を HTML にして、この場所に書き出してから呼んでください',
   /** 文書の HTML ファイルを読めないとき */

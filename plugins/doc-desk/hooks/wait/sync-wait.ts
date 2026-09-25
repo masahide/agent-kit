@@ -127,7 +127,8 @@ export async function waitForAnswer<T>(
     }
     const answer = await readAnswer(deps, target)
     if (answer) {
-      return { kind: 'answered', answer }
+      // 読んでいる間に取り消しや差し替えがあれば、その回答は届けない
+      return options.isStillPending() ? { kind: 'answered', answer } : { kind: 'dropped' }
     }
     if (options.signal.aborted) {
       return { kind: 'pending', endedBy: 'abort', waitedSeconds }
@@ -150,9 +151,12 @@ export async function waitForAnswer<T>(
     // 回答済み (受信サーバはファイルを書いてから応答する) か、失敗 (受信サーバが死んだ、届かない、
     // 応答の形が違う)。どちらもファイルを見て、無ければ打ち切る (回答済みなのにファイルが無い場合に
     // 空回りしないため)。以後は監視タイマーが届ける
+    if (!options.isStillPending()) {
+      return { kind: 'dropped' }
+    }
     const late = await readAnswer(deps, target)
     if (late) {
-      return { kind: 'answered', answer: late }
+      return options.isStillPending() ? { kind: 'answered', answer: late } : { kind: 'dropped' }
     }
     return { kind: 'pending', endedBy: 'receiverLost', waitedSeconds }
   }

@@ -75,6 +75,16 @@ export type WorldOptions = {
   python?: PythonCommand
   /** `GET /wait` の答え。省略時は毎回 `{ answered: false }` (timeout まで回答が無かった) */
   waitReply?: (call: WaitCall) => WaitReply | Promise<WaitReply>
+  /** true なら `$.prompt.submit` を `{ drop }` で断る */
+  dropSubmits?: boolean
+  /** 最初のこの回数の `$.prompt.submit` を失敗させる */
+  refuseSubmits?: number
+  /** `--port` で指定されても取れない (使用中の) port */
+  busyPorts?: number[]
+  /** `$.session.id()` の答え。省略時は `session-now` */
+  sessionId?: string
+  /** `$.store` の初めの中身 (前のセッションが残した記録を模す) */
+  store?: Record<string, unknown>
 }
 
 /**
@@ -113,11 +123,20 @@ export function world(on: On, options: WorldOptions = {}) {
   const registeredTools: string[] = []
   const registeredCommands: string[] = []
   const fetched: WaitCall[] = []
+  const store = new Map<string, unknown>(Object.entries(options.store ?? {}))
+  /** `$.store` への書き込みと削除の順 (`set <key>` / `delete <key>`) */
+  const storeOps: string[] = []
+  const toasts: string[] = []
+  const suggested: string[] = []
   let invalidations = 0
 
   const clock = mock.clock(on, { now: Date.UTC(2026, 8, 22, 12, 0, 0) })
 
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+
+  on('session.id', () => ({ value: options.sessionId ?? 'session-now' }))
+
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
 
   on('tool.register', ($, e) => {
     registeredTools.push(e.name)
@@ -140,6 +159,22 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   on('fs.exists', ($, e) => ({ value: files.has(keyOf(e.path)) }))
+
+  on('store.get', ($, e) => ({ value: store.get(e.key) }))
+
+  on('store.set', ($, e) => {
+    storeOps.push(`set ${e.key}`)
+    store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+    return { value: undefined }
+  })
+
+  on('store.delete', ($, e) => {
+    storeOps.push(`delete ${e.key}`)
+    store.delete(e.key)
+    return { value: undefined }
+  })
+
+  on('store.keys', () => ({ value: [...store.keys()] }))
 
   on('process.run', ($, e) => {
     runs.push(e.argv)
@@ -171,7 +206,10 @@ export function world(on: On, options: WorldOptions = {}) {
       if (options.isReceiverUp === false) {
         return { value: { exitCode: 1, stdout: '', stderr: '' } }
       }
-      return { value: { exitCode: 0, stdout: `${JSON.stringify({ port: RECEIVER_PORT, pid: RECEIVER_PID })}\n`, stderr: '' } }
+      // --port があり、塞がっていなければその port を使う (receiver.py と同じ)
+      const wanted = e.argv.includes('--port') ? Number(e.argv[e.argv.indexOf('--port') + 1]) : 0
+      const port = wanted > 0 && !(options.busyPorts ?? []).includes(wanted) ? wanted : RECEIVER_PORT
+      return { value: { exitCode: 0, stdout: `${JSON.stringify({ port, pid: RECEIVER_PID })}\n`, stderr: '' } }
     }
 
     return { value: { exitCode: 0, stdout: '', stderr: '' } }
@@ -179,6 +217,7 @@ export function world(on: On, options: WorldOptions = {}) {
 
   on('http.fetch', async ($, e) => {
     const timeout = /[?&]timeout=(\d+)/.exec(e.url)?.[1]
+    // 引き継ぎの生死確認 (timeout=0) も /wait として数える
     const call: WaitCall = { url: e.url, timeoutSeconds: Number(timeout ?? 0), count: fetched.length + 1 }
     fetched.push(call)
     const reply = await (options.waitReply ?? (() => ({ answered: false })))(call)
@@ -213,9 +252,29 @@ export function world(on: On, options: WorldOptions = {}) {
     return { value: undefined }
   })
 
+  let refusedSubmits = 0
   on('prompt.submit', ($, e) => {
+    if (refusedSubmits < (options.refuseSubmits ?? 0)) {
+      // 投入が受け付けられない (フックが失敗し、下の層も答えないので $.prompt.submit が reject する)
+      refusedSubmits += 1
+      throw new Error('prompt.submit refused')
+    }
+    if (options.dropSubmits) {
+      // 投入が他のフックに断られた ($.prompt.submit は reject せず { drop } で resolve する)
+      return { drop: 'blocked by a hook' }
+    }
     submitted.push(e)
     return { text: e.text, ...(e.context && { context: e.context }) }
+  })
+
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+
+  on('prompt.suggest', ($, e) => {
+    suggested.push(e.text)
+    return { isShown: true }
   })
 
   return {
@@ -227,6 +286,10 @@ export function world(on: On, options: WorldOptions = {}) {
     statuses,
     submitted,
     fetched,
+    store,
+    storeOps,
+    toasts,
+    suggested,
     registeredTools,
     registeredCommands,
     clock,
