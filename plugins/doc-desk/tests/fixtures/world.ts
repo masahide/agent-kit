@@ -124,6 +124,8 @@ export function world(on: On, options: WorldOptions = {}) {
   const registeredCommands: string[] = []
   const fetched: WaitCall[] = []
   const store = new Map<string, unknown>(Object.entries(options.store ?? {}))
+  /** `$.store` への書き込みと削除の順 (`set <key>` / `delete <key>`) */
+  const storeOps: string[] = []
   const toasts: string[] = []
   const suggested: string[] = []
   let invalidations = 0
@@ -161,11 +163,13 @@ export function world(on: On, options: WorldOptions = {}) {
   on('store.get', ($, e) => ({ value: store.get(e.key) }))
 
   on('store.set', ($, e) => {
+    storeOps.push(`set ${e.key}`)
     store.set(e.key, JSON.parse(JSON.stringify(e.value)))
     return { value: undefined }
   })
 
   on('store.delete', ($, e) => {
+    storeOps.push(`delete ${e.key}`)
     store.delete(e.key)
     return { value: undefined }
   })
@@ -283,6 +287,7 @@ export function world(on: On, options: WorldOptions = {}) {
     submitted,
     fetched,
     store,
+    storeOps,
     toasts,
     suggested,
     registeredTools,
