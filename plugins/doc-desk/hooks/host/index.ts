@@ -64,6 +64,8 @@ export type Host = {
   toast: (text: string) => void
   /** `$.prompt.submit` */
   submitPrompt: (input: PromptSubmitArgs) => Promise<PromptSubmitResult>
+  /** `$.turn.abort` (`turn.start` で覚えた id の turn を止める。ライブ指摘の [今すぐ止めて直す]) */
+  abortTurn: (input: { turnId: string }) => Promise<void>
   /** `$.prompt.suggest` (プロンプト欄の薄い候補。Tab で取る) */
   suggest: (input: PromptSuggestArgs) => Promise<PromptSuggestResult>
   /** `$.model.fork` (main の会話の後ろに 1 問だけ足して答えさせる。指摘の候補に使う) */

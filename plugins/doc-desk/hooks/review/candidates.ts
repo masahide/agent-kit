@@ -4,15 +4,23 @@ import { REVIEW_CHIPS } from './review-v1'
  * Claude が自分の文書に付けた指摘の候補 1 件。指摘の画面に出し、人が採用か却下を選びます。
  */
 export type ReviewCandidate = {
-  /** 段落番号 (1 から)。画面は `quote` をまずこの段落で探し、無ければ全段落で探します */
+  /** 段落番号 (1 から。0 は段落が分からない)。画面は `quote` をまずこの段落で探し、無ければ全段落で探します */
   block: number
-  /** チップ (`REVIEW_CHIPS` のどれか) */
+  /** チップ (`REVIEW_CHIPS` のどれか。ライブ指摘は空) */
   chip: string
   /** 段落の中の直したい文字列。無ければ段落全体への候補 */
   quote: string
-  /** 何をどう直すか (200 文字以内) */
+  /** 何をどう直すか (Claude の候補は 200 文字以内) */
   text: string
+  /** `live` = ライブ表示で人が付け、まだ Claude に届けていなかった指摘。Claude の候補には無い */
+  source?: 'live'
 }
+
+/**
+ * ライブ表示で付けてまだ届けていない指摘を、指摘の画面の候補にします (段落は画面が `quote` で探す)。
+ */
+export const liveCandidatesOf = (comments: readonly { quote: string; text: string }[]): ReviewCandidate[] =>
+  comments.map(comment => ({ block: 0, chip: '', quote: comment.quote.trim(), text: comment.text.trim(), source: 'live' as const }))
 
 /**
  * 候補を作るか。plugin の設定 (`userConfig.selfReview`) とツールの入力 (`selfReview`) のどちらかが false なら作りません。

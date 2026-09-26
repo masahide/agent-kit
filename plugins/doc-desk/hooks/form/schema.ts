@@ -169,6 +169,46 @@ export const REVIEW_SCHEMA = {
 } as const
 
 /**
+ * ライブ表示 (docs/doc-desk/live-view-design.md) の `live`。
+ */
+export const LIVE_SCHEMA = {
+  type: 'object',
+  description: 'ライブ表示 v1。source への Write と Edit をブラウザに流す',
+  properties: {
+    documentId: {
+      type: 'string',
+      pattern: '^[A-Za-z0-9_-]{1,64}$',
+      description: '文書の識別子。書き終えて呼ぶ open_review の documentId と揃えると、同じタブが指摘の画面へ移る',
+    },
+    label: {
+      type: 'string',
+      pattern: '^[A-Za-z0-9_-]{1,64}$',
+      description: '証跡の名前 (doc-desk/<label>.json と .html)。質問票や指摘の画面の label と別にする (例: <documentId>-live)',
+    },
+    source: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 1024,
+      description: 'これから書く文書のパス (質問票の source と同じ値)。このパスへの Write と Edit だけを流す',
+    },
+    title: { ...nonEmptyString, description: '画面の上に出す文書の題名' },
+  },
+  required: ['documentId', 'label', 'source', 'title'],
+} as const
+
+/**
+ * ツール `open_live` の入力全体。
+ */
+export const LIVE_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    live: LIVE_SCHEMA,
+    openBrowser: OPEN_BROWSER,
+  },
+  required: ['live'],
+} as const
+
+/**
  * ツール `open_review` の入力全体。
  */
 export const REVIEW_INPUT_SCHEMA = {

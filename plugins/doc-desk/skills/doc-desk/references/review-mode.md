@@ -63,6 +63,7 @@
 - `files` は `{ doc, review, html }` (候補を作ったときは `candidates`、`answered` では `answer` と `md` を足す) です。候補づくりの間に人が中断すると `cancelled` が返り、画面は出ていません。`review` は検証済みの入力 (`doc-desk/<label>.json`) です。
 - `invalid` の `errors` には、`review` の欄の誤りに加えて、HTML ファイルの誤り (`<パス>: <直し方>`) が入ります。ファイルが無い、許可リストに無い要素や属性がある、10 万文字を超える、段落が無い、のどれかです。直して同じツールをもう一度呼びます。
 - `pending` のとき、指摘は後で `【doc-desk 回答】<documentId>` で始まる user turn として届きます。届くまで文書を直さず、完了報告もせず、ターンを終えます。
+- 同じ `documentId` のライブ表示 (7 章) が開いていれば、ライブ表示のタブがそのまま指摘の画面へ移ります (`openBrowser` を省くとブラウザは開き直しません)。ライブ表示でまだ届けていなかった指摘は、画面に「ライブ表示で付けた指摘」として並び、人が採用したものだけが届きます。
 
 ## 4. 長い文書
 
@@ -113,7 +114,8 @@
 - 書き換えと追加の `<使い方>` は、人が画面で選んだ `そのまま` (既定) か `参考にして直す` です。扱いは 6 章の 1 のとおりです。
 - `前:` と `後:` は書式を外した文です。文が複数行なら、2 行目以降は行頭に空白 2 つが付きます (空白 2 つは文の一部ではありません)。表の行の `後:` は、セルを ` | ` で区切った文です。
 - 全体へのコメントの扱いは回答固定形 v1 と同じです (`references/reply-format-v1.md`)。人の記述は一字一句そのまま扱います。
-- 迷うときだけ `doc-desk/<label>.answer.json` を読みます。形は `{ "kind": "review", "documentId", "revision", "comments": [{ "block", "chip", "quote", "text", "source"?: "claude" }], "edits": [{ "kind": "rewrite" | "delete" | "move" | "add", "block", "text"?, "mode"?: "exact" | "guide", "to"? }], "blocks": { "<段落番号>": "<文字列>" }, "globalNote", "submittedAt" }` です。
+- 行末の `(Claude の候補)` は Claude の候補を、`(ライブ指摘)` はライブ表示で人が付けた指摘を、人が採用したものです。どちらも人の指摘として反映します。
+- 迷うときだけ `doc-desk/<label>.answer.json` を読みます。形は `{ "kind": "review", "documentId", "revision", "comments": [{ "block", "chip", "quote", "text", "source"?: "claude" | "live" }], "edits": [{ "kind": "rewrite" | "delete" | "move" | "add", "block", "text"?, "mode"?: "exact" | "guide", "to"? }], "blocks": { "<段落番号>": "<文字列>" }, "globalNote", "submittedAt" }` です。
 - `failed` で人が回答 JSON をチャットに貼ったときは、Claude がこの形に当てはめて読みます。
 
 ## 6. 指摘の反映と完了報告
@@ -129,3 +131,26 @@
 4. 直した後、`references/document-lint.md` の 5 章の手順で、指摘で直した箇所を検査します。`(そのまま)` の書き換えと追加の文は、検査で引っかかっても言い換えません。気になる点は完了報告で人に伝えます。`(参考にして直す)` で Claude が書いた文は、検査して直します。
 5. 指摘の反映で文書が大きく変わり、人に見直してほしいときだけ、`revision` を進め、`label` を変えて指摘の画面を出し直します。
 6. 完了報告には、書き換えと指摘を 1 件ずつ並べ、それぞれに反映した箇所か、直さなかった理由を添えます。`(参考にして直す)` の書き換えと追加は、人が書いた文と Claude が書いた文を並べて示します。指摘の画面の HTML (`doc-desk/<label>.doc.html`) と回答 (`doc-desk/<label>.md`) も絶対パスで示します。
+
+## 7. ライブ表示 (書きながら見せる)
+
+宣言があるときは、文書を書き始める直前にツール `mcp__doc-desk__open_live` を呼びます。書いている文がブラウザに流れ、人は書いている途中から読めます。宣言が無ければ呼びません。
+
+```json
+{ "live": { "documentId": "spec-auth-01", "label": "spec-auth-01-live", "source": "docs/spec-auth.md", "title": "認証方式の仕様" } }
+```
+
+| 欄 | 必須 | 規則 |
+|---|---|---|
+| `documentId` | 必須 | 書き終えて呼ぶ `open_review` と同じ値にします。同じなら、ライブ表示のタブがそのまま指摘の画面へ移ります |
+| `label` | 必須 | 質問票や指摘の画面と別の名前にします (例: `spec-auth-01-live`) |
+| `source` | 必須 | これから書く文書のパス (質問票の `source` と同じ値)。このパスへの `Write` と `Edit` だけが流れます |
+| `title` | 必須 | 画面の上に出す文書の題名 |
+
+- 結果の `status` は `opened` (開きました)、`invalid` (`errors` を直して再送)、`disabled` (plugin の設定で切られています。呼ばずに書きます)、`failed` (`reason` を人に伝え、ライブ表示なしで書きます) です。回答待ちの画面があるときは `invalid` です (回答が届いてから呼びます)。
+- 文書は `Write` と `Edit` で書きます。`Bash` の heredoc やリダイレクトで書くと流れません。
+- 書き終えたら、ライブ表示を閉じずに、そのまま文書を HTML にして `open_review` を同じ `documentId` で呼びます。
+- 人は読みながら「ライブ指摘」を付けられます。届き方は 2 つです。
+  - [書き終わったら直す]: `source` への `Write` か `Edit` の結果に、`【doc-desk ライブ指摘】` で始まる文が添えられます。先へ進む前に、「引用」の文字列を文書の中で探し、`Edit` で直します。
+  - [今すぐ止めて直す]: Mod がターンを止め、`【doc-desk ライブ指摘】` で始まる user turn が届きます。指摘を反映して書き直し、書き終えたら `open_review` に進みます。ちょうど `Write` か `Edit` が終わるときに押されたものは、止めずにその結果に添えて届きます。
+- 届けきれなかったライブ指摘は、指摘の画面に候補として並びます (3 章)。

@@ -11,6 +11,12 @@
       "title": "指摘の画面に Claude の候補を出す",
       "description": "open_review の中で、Claude が自分の文書の直しどころを 1 回だけ見つけ、指摘の画面に候補として出します。人は採用か却下を押すだけです。切ると候補を作りません (その分の費用もかかりません)。",
       "default": true
+    },
+    "liveView": {
+      "type": "boolean",
+      "title": "書いている文書をブラウザに流す (ライブ表示)",
+      "description": "Claude が open_live を呼ぶと、文書を書いている間その文をブラウザに流し、読みながら付けた指摘をその場で Claude に届けます。切ると open_live は何もしません。",
+      "default": true
     }
   }
 }

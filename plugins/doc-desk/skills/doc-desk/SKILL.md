@@ -29,7 +29,7 @@ description: 設計書・仕様書・企画書・記事を書く前、または�
 3. **質問文の検査** — `references/question-lint.md` の表で、質問文と構成案を自己検査します。読者が知らない語は `glossary` に入れます。Claude が作った ID や記号名 (`q1`, `tb1`, 変数名) を問いの文と構成案の文に出しません。
 4. **試問 (preflight)** — `references/preflight.md` の手順で、`Agent` ツールで文脈ゼロの subagent を立て、質問票 (構成案を含む) を Markdown に落として渡し、5 つの検査を出します。結果を受け取るまで次に進みません。落ちた問いは直して同じ subagent に差分だけを再試問し、計 2 巡で打ち切ります。
 5. **`open_form` を呼び、結果で分岐する** — 下の「open_form の呼び方と結果」のとおりに呼びます。ツールは既定で 300 秒まで回答を待ちます。`answered` が返ったら `reply` が回答です。手順 6 へ進みます。`pending` が返ったら、人に「ブラウザのフォームで答えて [送信] を押してください。閉じてしまったら `/doc-desk-resume` で開き直せます。セッションを閉じても、次の起動で届きます」と伝えて応答を終えます。回答は `【doc-desk 回答】<documentId>` で始まる user turn として届きます。届くまで文書を書きません。
-6. **回答の反映** — 届いた固定形 (`answered` の `reply`、または user turn) を `references/reply-format-v1.md` の規則で読みます。会話が圧縮された後は、固定形は要約の後ろの `【doc-desk 決定の記録】` に原文のまま残っています (長いときは決定の部分だけで、全文は `doc-desk/<label>.md` にあります)。決定を読み直すときはそれと `doc-desk/<label>.md` を見ます。お任せ (未選択) の問いは推奨案で確定します。補足と全体へのコメントは一字一句そのまま扱います。文書は、質問票の構成案の節立てに沿って書きます。文書を書く前に `references/document-lint.md` を Read し、1 章 (読者、冒頭の一文、各節で言い切る決定、質問票から引き継ぐもの) を決めます。書いた後は同じファイルの 5 章の順に検査して直します。文書の冒頭か末尾に「決定事項」として、各問の決定とお任せで確定した項目を書きます。
+6. **回答の反映** — 指摘モードの宣言があるときは、文書を書き始める直前に `open_live` を呼び、書いている文をブラウザに流します (`references/review-mode.md` の 7 章)。文書は `Write` と `Edit` で書き、`Bash` では書きません。届いた固定形 (`answered` の `reply`、または user turn) を `references/reply-format-v1.md` の規則で読みます。会話が圧縮された後は、固定形は要約の後ろの `【doc-desk 決定の記録】` に原文のまま残っています (長いときは決定の部分だけで、全文は `doc-desk/<label>.md` にあります)。決定を読み直すときはそれと `doc-desk/<label>.md` を見ます。お任せ (未選択) の問いは推奨案で確定します。補足と全体へのコメントは一字一句そのまま扱います。文書は、質問票の構成案の節立てに沿って書きます。文書を書く前に `references/document-lint.md` を Read し、1 章 (読者、冒頭の一文、各節で言い切る決定、質問票から引き継ぐもの) を決めます。書いた後は同じファイルの 5 章の順に検査して直します。文書の冒頭か末尾に「決定事項」として、各問の決定とお任せで確定した項目を書きます。
 7. **2 枚目 (必要なら)** — 回答で設計が変わり、新しい論点が生まれたときだけ、同じ `documentId` で `revision` を進めた質問票を作ります。`label` は必ず変えます (例: `spec-auth-01` → `spec-auth-01-r2`)。同じ `label` を使うと前の質問票の証跡 `doc-desk/<label>.*` が上書きされます (Mod は起動前に前回の `.answer.json` を消し、`documentId` と `revision` が違う回答を無視するので、古い回答を拾うことはありません)。捨てた案は文書に残します (「採用しなかった案」の節)。
 8. **指摘モード (宣言があるとき、または人が頼んだとき)** — `references/review-mode.md` を Read し、その手順で進めます。宣言かどうかは会話を読んで判定します (スラッシュコマンド `/doc-desk:doc-desk` でスキルを呼んだとき、または「この Mod でやろう」のように文で頼んだとき)。書き上げた文書を許可リストの HTML に変換して `doc-desk/<label>.doc.html` に書き出し、`open_review` を呼びます。結果の分岐は `open_form` と同じです。`pending` なら文書を直さず、完了報告もせずにターンを終えます。届いた書き換えは、`(そのまま)` なら一字一句そのまま、`(参考にして直す)` なら意図に沿って Claude が文を書いて反映します。続けて指摘を反映し、完了報告へ進みます。10 万文字を超える文書は、節の切れ目で分けて何回かの画面に出します。
 
@@ -75,6 +75,8 @@ Mod はセッションの作業ディレクトリの下 `doc-desk/` に、質問
 | `doc-desk/<label>.html` | 自己完結の HTML シート (`file://` でも開ける) | Mod |
 | `doc-desk/<label>.answer.json` | ブラウザが送った回答 JSON (同じ label の前回のものは `open_form` が起動前に消す) | 受信サーバ |
 | `doc-desk/<label>.md` | 回答固定形 (`reply` または user turn として届いたものと同じ。末尾に改行 1 つ) | Mod (`failed` で人が回答 JSON を貼ったときは Claude) |
+| `doc-desk/<label>.json`、`.html` (ライブ表示) | `open_live` の検証済みの `live` と、ライブ表示の HTML (文書の中身は含まない) | Mod |
+| `doc-desk/<label>.comments.json` (ライブ表示) | ライブ指摘と、その扱い (`context` / `prompt` / `review` / `dropped`) と時刻 | Mod |
 
 回答の正は届いた固定形 (`answered` の `reply`、または user turn) です。全体へのコメントに `---` や `## ` の行が含まれていて読み方に迷うときや、表のセルを原文で確かめたいときだけ `doc-desk/<label>.answer.json` を読んで照合します。証跡は消しません。「なぜこの設計か」の答えになります。
 
@@ -99,4 +101,4 @@ Mod はセッションの作業ディレクトリの下 `doc-desk/` に、質問
 - `references/question-lint.md` — 質問文の自己検査表 (ja-text-communication の規範番号順)
 - `references/document-lint.md` — 文書の検査表 (ja-text-communication の規範と AI 臭の検査)。回答を反映して文書を書く前に Read
 - `references/preflight.md` — 試問の手順、質問票の Markdown の形、subagent に渡すプロンプトの雛形、打ち切り規則
-- `references/review-mode.md` — 指摘モード。宣言の判定、文書の HTML の書き方、`open_review` の入力と結果、長い文書の分け方、指摘の回答の読み方、反映と完了報告。手順 8 の前に Read
+- `references/review-mode.md` — 指摘モード。宣言の判定、文書の HTML の書き方、`open_review` の入力と結果、長い文書の分け方、指摘の回答の読み方、反映と完了報告、ライブ表示 (`open_live` とライブ指摘)。手順 6 (宣言があるとき) と手順 8 の前に Read

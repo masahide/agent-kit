@@ -20,6 +20,12 @@ Mod がそれを回答固定形 (`【doc-desk 回答】` で始まる文) にし
 受信サーバ、同期待ち、監視、ペインは `open_form` と同じで、指摘は同じ `【doc-desk 回答】` の固定形の
 `## 指摘` と `## 書き換え` の節で届きます。
 
+ライブ表示: Claude が文書を書き始める前にツール `open_live` を呼ぶと、`source` への `Write` の文を
+`turn.step` の `input` チャンクから逐次取り出してブラウザへ流します (SSE)。人は読みながら「ライブ指摘」を付けられ、
+[書き終わったら直す] は次の `Write` か `Edit` の Tool result の `context` で、[今すぐ止めて直す] は `$.turn.abort` と
+`$.prompt.submit` で Claude に届きます。書き終えて同じ `documentId` で `open_review` を呼ぶと、同じタブが指摘の画面へ移ります。
+設計は [docs/doc-desk/live-view-design.md](../../docs/doc-desk/live-view-design.md) にあります。
+
 背景と決定の記録は [docs/doc-desk/plan.md](../../docs/doc-desk/plan.md) にあります。
 対象は Claude Code 2.1.278 の Claude Mods (function hooks、早期アクセス) です。
 
@@ -59,6 +65,41 @@ sequenceDiagram
 同期経路があるのは、人が数分で答えるふつうの場合に、Claude のターンを切らずに回答を渡すためです。
 `pending` だけだと Claude のターンが一度終わり、回答は別の user turn として届きます。
 
+ライブ表示の流れ:
+
+```mermaid
+sequenceDiagram
+    participant U as 人
+    participant C as Claude
+    participant M as Mod
+    participant L as ライブ用の受信サーバ
+    participant B as ブラウザ
+    C->>M: tool.call open_live(live)
+    M->>L: receiver.py start --live (--out は無い)
+    M-->>C: { status: "opened", url }
+    B->>L: GET /events (SSE)
+    loop Claude が source に Write する
+        C->>M: turn.step の input チャンク (Write の引数 JSON の断片)
+        M->>L: POST /document { kind: append, seq } (待たずに投げる)
+        L-->>B: append
+        L-->>M: 応答に { comments, stop }
+    end
+    U->>B: 文字列を選んで指摘 → [書き終わったら直す] / [今すぐ止めて直す]
+    B->>L: POST /comments
+    alt 書き終わったら直す
+        M-->>C: Write の Tool result に context (【doc-desk ライブ指摘】)
+    else 今すぐ止めて直す
+        M->>M: $.turn.abort({ turnId })
+        M->>C: $.prompt.submit (【doc-desk ライブ指摘】)
+    end
+    Note over M,L: 60 秒ごとに GET /wait (keepalive)。Mod からの接触が 10 分途絶えると受信サーバは自分で終わる。<br/>keepalive が 3 回続けて届かなければ、Mod は受信サーバが死んだとみなしてライブ表示を手放す
+    C->>M: tool.call open_review (同じ documentId)
+    M->>L: POST /finish {} (未届の指摘を受け取り、候補に埋める。以後の /comments は 409)
+    M->>M: 指摘の画面の受信サーバを起動
+    M->>L: POST /finish { url }
+    L-->>B: redirect (タブが指摘の画面へ移る)。1 秒後に終了
+```
+
 ## ファイル
 
 | パス | 役割 |
@@ -73,7 +114,12 @@ sequenceDiagram
 | `hooks/form/validate.ts` | 質問票の検証 (エラーを全部返す) |
 | `hooks/form/outline.ts` | 構成案の HTML で使える要素と属性 (検証と画面で共有)、構成案の検査 (使えない要素、印の過不足) |
 | `hooks/form/answer.ts` | 回答 JSON の読み取り (`documentId` と `revision` が質問票と違えば無視) |
-| `hooks/form/schema.ts` | `$.tool.register` に渡す JSON Schema |
+| `hooks/form/schema.ts` | `$.tool.register` に渡す JSON Schema (`open_form`、`open_review`、`open_live`) |
+| `hooks/live/json-stream.ts` | ライブ表示: Write の引数 JSON の断片から `file_path` と `content` を逐次取り出す状態機械 (純粋関数) |
+| `hooks/live/live-v1.ts` | ライブ表示: `live` の入力と `LiveComment` の型と検証、受信サーバの応答の読み取り |
+| `hooks/live/comments.ts` | ライブ表示: 指摘を届ける `context` と、止めた後に投入する prompt の文、証跡 `.comments.json` の 1 件 |
+| `hooks/live/controller.ts` | ライブ表示の状態と振る舞い (`open_live`、`turn.step` の観察、Write と Edit の後の処理、止めて届ける処理、`open_review` への引き渡し、keepalive) を閉包にまとめたもの。`register.ts` はフックから呼ぶだけ |
+| `hooks/sheet/render-live.ts` | ライブ表示の自己完結 HTML。SSE で受けた文書を小さな Markdown 描画器で描き、最下部に追従し、右にライブ指摘の欄と送った指摘の一覧 |
 | `hooks/sheet/render-html.ts` | 質問票 → 自己完結 HTML (素の JS を文字列で埋める)。左に構成案、右に選んだものの詳細 (全体の進み具合と次に見る項目 / 決定 / 表の説明)、下に進捗と送信。構成案の HTML はブラウザで DOMParser にかけ、許可した要素と属性だけで組み直す |
 | `hooks/sheet/common.ts` | 2 つの画面が共有する CSS と、HTML と JSON の逃がし |
 | `hooks/sheet/render-review.ts` | 指摘の画面 → 自己完結 HTML。左に文書 (DOMParser で解析し、許可した要素と属性だけで組み直す)、段落に上から番号を振る。右に全体 (指摘と書き換えの数と一覧、全体へのコメント) か、選んだ段落の操作 (チップ、コメント、この段落の指摘、書き換え・削除・移動・追加)。書き換えた段落は左に書き換えた後の文を出す |
@@ -85,13 +131,13 @@ sequenceDiagram
 | `hooks/review/candidates.ts` | 指摘の候補: fork に渡す 1 問の組み立て、返答の JSON の取り出しと検証、作るかどうかの判定 |
 | `hooks/review/answer.ts` | 指摘の回答 JSON の読み取り (`kind`、`documentId`、`revision` が違えば無視、形の違う指摘と添削は捨てる) |
 | `hooks/review/format.ts` | 指摘の回答 JSON → 回答固定形 (`## 指摘`、`## 指摘した段落`、`## 書き換え`) |
-| `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`clean`、`open`、`stop`)、`start` が印字する 1 行の読み取り、URL (`/`, `/wait`, `Link` 用の localhost) |
+| `hooks/receiver/index.ts` | Python 3 の候補 (`python3`、`python`、`py -3`)、`receiver.py` のサブコマンドの argv (`start`、`start --live`、`clean`、`open`、`stop`)、`start` が印字する 1 行の読み取り、URL (`/`, `/wait`, `/document`, `/finish`, `Link` 用の localhost) |
 | `hooks/wait/sync-wait.ts` | 同期待ち: `tool.call` の中で `/wait` のロングポーリングを繰り返し、回答ファイルを読む (読み方は画面ごとに渡す) |
 | `hooks/views/pane-view.ts` | 待機中のペイン (Box / Text / Button / Link) |
 | `hooks/views/reply-row.ts` | 畳んだ回答行 (Box / Text。terminal と desktop で同じ木) |
 | `hooks/views/strings.ts` | 固定文言 |
 | `hooks/tool-input.d.ts` | `McpToolInputs` にツールの入力を足す宣言 (型付けのみ) |
-| `scripts/receiver.py` | ローカル受信サーバ (Python 3 の標準ライブラリのみ、127.0.0.1、`/wait` のロングポーリング付き) と、OS ごとに違う操作のサブコマンド (`start` で切り離して起動、`open` でブラウザ、`clean` で削除、`stop` で停止) |
+| `scripts/receiver.py` | ローカル受信サーバ (Python 3 の標準ライブラリのみ、127.0.0.1、`/wait` のロングポーリング付き) と、OS ごとに違う操作のサブコマンド (`start` で切り離して起動、`open` でブラウザ、`clean` で削除、`stop` で停止)。`--live` でライブ表示の受信サーバ (`/events` の SSE、`/document`、`/comments`、`/finish`。配る HTML の消失か書き換えか、Mod からの接触 (`/document`、`/finish`、keepalive の `/wait`) の 10 分の途絶で自分で終わる。質問票と指摘の画面の受信サーバにある「起動から 1 時間」の上限は付けない。Mod が閉じるときは `POST /finish { close: true }` で終わる。どの終わり方でも、終わる直前に `phase: closed` を流して画面の再接続を止める。状態は `phase` 付きで流し、文言は画面が `hooks/views/strings.ts` から持つ) |
 | `skills/doc-desk/` | Claude 側の手順 (SKILL.md) と references (下の「スキル」) |
 | `tests/` | `claude plugin test` のテストと fixtures |
 
@@ -100,21 +146,27 @@ sequenceDiagram
 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin validate plugins/doc-desk` の印字:
 
 ```
-❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, command.run{command=doc-desk-resume}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.complete, tool.check{tool=Write}, tool.check{tool=Edit}, tool.check{tool=NotebookEdit}, session.compact, session.end, ui.close{id=doc-desk}
+❯ ./register.ts hooks: session.start, tool.call{tool=mcp__doc-desk__open_form}, tool.call{tool=mcp__doc-desk__open_review}, tool.call{tool=mcp__doc-desk__open_live}, command.run{command=?}, ui.render{component=Pane}, ui.render{component=UserMessage, props.origin has {kind=plugin}}, turn.start, turn.step, turn.complete, tool.call{tool=Write}, tool.call{tool=Edit}, tool.check{tool=Write}, tool.check{tool=Edit}, tool.check{tool=NotebookEdit}, session.compact, session.end, ui.close{id=doc-desk}
 ```
+
+`command.run` は定数 `COMMAND_NAME` (`doc-desk-resume`) で絞るので、validate は `command=?` と印字します。
 
 | event | what the hook does |
 | --- | --- |
-| `session.start` | `$` を host に束ね、ツール `open_form` と `open_review` と `/doc-desk-resume` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする。続けて `$.store` の `pending:<cwd>` に前のセッションの待機の記録があれば引き継ぐ (下の「引き継ぎ」) |
+| `session.start` | `$` を host に束ね、ツール `open_form` と `open_review` と `open_live` と `/doc-desk-resume` を登録し、Python 3 を `python3`、`python`、`py -3` の順に 1 回だけ探して結果を保持する。`e.cwd` を証跡の置き場の基準にする。続けて `$.store` の `pending:<cwd>` に前のセッションの待機の記録があれば引き継ぐ (下の「引き継ぎ」) |
 | `tool.call` of `mcp__doc-desk__open_form` | 質問票を検証し (不正なら `{ status: "invalid", errors }`)、`doc-desk/<label>.json` と `.html` を書き、同じ label の前回の `.answer.json` を `receiver.py clean` で消し、受信サーバを `receiver.py start` で切り離して起動して stdout の 1 行から port と pid を読み、ブラウザを開き (`openBrowser: false` なら開かない)、ペインを開き、`clock.every(500)` で回答ファイルの監視を始める。続けて `waitSeconds` (既定 300、0 で待たない、上限 1800) まで `GET /wait?timeout=4` のロングポーリングで回答を待ち、届けば `{ status: "answered", reply, files }` と context 1 件を返す (user turn は投入しない)。上限到達・中断 (`next.signal`)・受信サーバ喪失・`waitSeconds: 0` なら `{ status: "pending", url, files, wait: { seconds, endedBy } }` と context 1 件を返し、以後は監視が届ける。待っている間に [取り消す] が押されれば `{ status: "cancelled", reason }`。受信サーバが起動できなければ `{ status: "failed", reason, files }` |
-| `tool.call` of `mcp__doc-desk__open_review` | `review` を検証し、`doc-desk/<label>.doc.html` を読んで検査する (無い、読めない、許可リストに無い要素や属性、10 万文字超、段落なし、のどれかなら `{ status: "invalid", errors }`)。続けて、入力の `selfReview` と設定の `selfReview` がどちらも false でなければ、段落番号付きの一覧 (`numberedBlocks`) と document-lint の要約を `$.model.fork` に 1 問だけ渡し、返った JSON から候補 (最大 5 件、段落番号が範囲内、チップが 9 種のどれか、`text` が 200 文字以内) を取り出して `doc-desk/<label>.candidates.json` に書き、画面に埋め、結果の `files` に `candidates` として載せる。返答の JSON はコードフェンスの中を先に探し、無ければ `[` の位置ごとに試す。fork が答えなければ候補なしで進む。fork を待つ間に中断されたら (`next.signal` か fork の `aborted`)、受信サーバもブラウザも出さずに `{ status: "cancelled" }` を返す。候補を作らないときは、前回の `.candidates.json` を消す。`doc-desk/<label>.json` に `review` を、`.html` に指摘の画面を書き、あとは `open_form` と同じ (受信サーバ、同期待ち、監視、ペイン)。結果の `files` は `{ doc, review, html }` (候補を作ったときは `candidates`、`answered` では `answer` と `md` を足す) |
-| `command.run` of `doc-desk-resume` | 起動時に見つけた回答が未送なら、`$.clock.after(0)` で回答固定形を `$.prompt.submit` する (`command.run` の中の `prompt.submit` はエンジンが拒むため)。そうでなく待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。どちらでもなければ「待機中の質問票も指摘の画面もありません」 |
-| `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く |
+| `tool.call` of `mcp__doc-desk__open_review` | `review` を検証し、`doc-desk/<label>.doc.html` を読んで検査する (無い、読めない、許可リストに無い要素や属性、10 万文字超、段落なし、のどれかなら `{ status: "invalid", errors }`)。続けて、入力の `selfReview` と設定の `selfReview` がどちらも false でなければ、段落番号付きの一覧 (`numberedBlocks`) と document-lint の要約を `$.model.fork` に 1 問だけ渡し、返った JSON から候補 (最大 5 件、段落番号が範囲内、チップが 9 種のどれか、`text` が 200 文字以内) を取り出して `doc-desk/<label>.candidates.json` に書き、画面に埋め、結果の `files` に `candidates` として載せる。返答の JSON はコードフェンスの中を先に探し、無ければ `[` の位置ごとに試す。fork が答えなければ候補なしで進む。fork を待つ間に中断されたら (`next.signal` か fork の `aborted`)、受信サーバもブラウザも出さずに `{ status: "cancelled" }` を返す。候補を作らないときは、前回の `.candidates.json` を消す。`doc-desk/<label>.json` に `review` を、`.html` に指摘の画面を書き、あとは `open_form` と同じ (受信サーバ、同期待ち、監視、ペイン)。結果の `files` は `{ doc, review, html }` (候補を作ったときは `candidates`、`answered` では `answer` と `md` を足す)。同じ `documentId` のライブ表示が開いていれば、`POST /finish {}` で未届のライブ指摘を受け取って候補 (`source: "live"`) として画面に埋め、指摘の画面の受信サーバが立った後に `POST /finish { url }` でライブ表示のタブを移す (ブラウザは `openBrowser: true` のときだけ開く)。別の `documentId` ならライブ表示を `POST /finish { close: true }` で閉じる (届かなければ pid で止める) |
+| `tool.call` of `mcp__doc-desk__open_live` | 設定 `liveView` が false なら `{ status: "disabled" }`。`live` を検証し (不正なら `invalid`)、回答待ちの画面があれば `invalid`。前のライブ表示を止め、`doc-desk/<label>.json` と `.html` を書き (同じ label の前のセッションの受信サーバは HTML の書き換えで自分で終わる)、`receiver.py start --live` で起動し、ブラウザとペインを開き、`{ status: "opened", documentId, url, files }` と context 1 件を返す |
+| `turn.start` | main の turn の id を覚える ([今すぐ止めて直す] の `$.turn.abort` に使う) |
+| `turn.step` | ライブ表示が開いていて main の step なら、チャンクを変えずに下流へ流しながら見る。`tool` チャンクの `Write` / `Edit` の `input` を `json-stream.ts` で読み、`file_path` が `source` なら、Write は `replace ''` の後に文を改行ごと (改行が無ければ 200 文字ごと) に `append` で、Edit は「直しています」を送る。`tool` と `stop` のチャンクでは `status` を送って指摘を取りに行く。送信は待たずに投げ、応答の指摘を貯める。応答の `stop` が true で、まだ止める指摘 (`now`) が残っていれば、`$.clock.after(0)` で今のディスパッチの外に出てから `$.turn.abort` の後に `$.prompt.submit` で指摘を届ける (turn の id が分からなければ [書き終わったら直す] と同じ扱い) |
+| `tool.call` of `Write`、`Edit` | ライブ表示が開いていて、書き込み先が `source` なら、完了後に全文を読み直して `replace` で送る。まだ届けていない指摘があれば、`mode` を問わず結果に `context` を 1 つ足して届け、`doc-desk/<label>.comments.json` に記録する。ここでは turn を止めない (`tool.call` の中では `$.prompt.submit` が拒まれ、止めても指摘が届かないため。Write はもう終わっているので [書き終わったら直す] と同じになる) |
+| `command.run` of `doc-desk-resume` | 起動時に見つけた回答が未送なら、`$.clock.after(0)` で回答固定形を `$.prompt.submit` する (`command.run` の中の `prompt.submit` はエンジンが拒むため)。そうでなく待機中ならペインを focus 付きで開き直し、ブラウザも開き直す。待機中でなくライブ表示が開いていれば、ペインとブラウザでライブ表示を開き直す。どれでもなければ「待機中の質問票も指摘の画面も、開いているライブ表示もありません」 |
+| `ui.render` of `Pane` (requestId `doc-desk`) | 見出し (`インタビュー: <label>  (rev n)`、指摘の画面では `指摘: <label>  (rev n)`)、URL (127.0.0.1 の文字)、`Link` (href は `http://localhost:<port>/?t=…`。`Link` の href は `https:` か `http://localhost` しか通らない)、経過秒数、[ブラウザで開く (o)] と [取り消す] を描く。回答待ちの画面が無くライブ表示が開いていれば、`ライブ表示: <label>` と書いている状態を描き、[取り消す] でライブ表示を閉じる |
 | `ui.render` of `UserMessage` (`props.origin.kind` が `plugin`) | この Mod (`origin.name` が `doc-desk`) が投入した `【doc-desk 回答】` の行を 1 行に畳む。質問票は `【doc-desk 回答】<documentId>  Q1=A  Q2=お任せ  補足 n 件`、指摘の画面は `指摘 n 件  書き換え m 件`。2 行目に保存した `.md` のパス (このセッションで届けたものだけ) と「ctrl+o で全文」。`isExpanded` (ctrl+o) のとき、固定形として読めないとき、他の plugin や人の行は `next(e)`。描き換えは行の見え方だけで、モデルが読む文は変わらない |
-| `turn.complete` | 待機中で、main の turn (`agentId` なし) が `reason: "answer"` で終わったとき、1 つの待機につき 1 回だけ `{ text: "回答先: <url>  (/doc-desk-resume で開き直せます)" }` を返して答えの下に出す |
+| `turn.complete` | 待機中で、main の turn (`agentId` なし) が `reason: "answer"` で終わったとき、1 つの待機につき 1 回だけ `{ text: "回答先: <url>  (/doc-desk-resume で開き直せます)" }` を返して答えの下に出す。ライブ表示が開いていれば、`answer` で「書き終わりました」(未届の指摘があれば件数を `$.ui.log`)、`aborted` で「中断しました」を送る ([今すぐ止めて直す] で止めた turn は除く) |
 | `tool.check` of `Write`、`Edit`、`NotebookEdit` | 待機中で、実際の呼び出し (`tool_use_id` あり) の書き込み先 (`file_path`、`notebook_path`) が、質問票の `source`、または指摘の画面の `review.source` か `doc-desk/<label>.doc.html` と同じなら `{ decision: "deny", reason: "doc-desk: <label> の回答待ちなので、<path> への書き込みを止めました。この文書への書き込みをやめてターンを終え、回答が届くのを待ってください …" }` を返す (`reason` はモデルへの指示。全文は `hooks/views/strings.ts` の `guardReasonOf`)。起動時に見つけた回答をまだ送っていない間 (未送) も同じパスを止め、`reason` で「/doc-desk-resume で回答を送ってもらう」よう伝える (`guardUnsentReasonOf`)。まだ無いファイルは、親のフォルダの `realPath` に名前を足して比べ、シンボリックリンクのフォルダ越しの新規作成も拾う。パスは cwd 基準の絶対パスにし、`\` を `/` に、`..` を解決して比べる (Windows では大文字小文字を無視)。ファイルがあれば `$.fs.stat(path, { resolve: true })` の `realPath` でも比べ、シンボリックリンク越しの書き込みも拾う。それ以外は `next(e)`。`ask` でなく `deny` なのは、人を待たせず、止める理由はモデルに伝われば足りるため |
 | `session.compact` | main の会話 (`agentId` なし) で、このセッションで Claude に届けた回答があるときだけ動く。`next({ ...e, instructions })` で要約に「doc-desk の決定は省略しない」を足し、戻った `messages` の末尾に `【doc-desk 決定の記録】` と各 `doc-desk/<label>.md` の全文を user の message (handle なし) として足す。回答待ちの画面があれば「届くまで対象の文書を書かない」と回答先の URL (圧縮で Tool result と `turn.complete` の行が消えても案内できるように) も足す。前の圧縮 (precompute の再利用を含む) で足した記録が結果に残っていれば除いてから足すので、記録は常に 1 つ。合計 20,000 文字 (JavaScript の文字列の長さ。UTF-16 の単位で数えるので、絵文字などは 1 字を 2 と数える) を超えると各回答を決定の部分 (質問票は `Qn.` の行と `## 表`、指摘の画面は `## 指摘` と書き換えの見出し) にし、それでも超えれば新しいものから入れて残りはパスだけ書く。`trigger` が `precompute` でも同じ |
-| `session.end` | このセッションが待機の記録を持っていれば、その `heartbeatAtMs` を 0 に戻して lease を手放す (次のセッションが 90 秒待たずに引き継げる)。`reason` が `clear` か `resume` のときはプロセスが続き監視も続くので、手放さない (手放すと、次の heartbeat までの間に同じフォルダの別のセッションが引き継ぎ、両方で回答を届けてしまう) |
+| `session.end` | このセッションが待機の記録を持っていれば、その `heartbeatAtMs` を 0 に戻して lease を手放す (次のセッションが 90 秒待たずに引き継げる)。`reason` が `clear` か `resume` のときはプロセスが続き監視も続くので、手放さない (手放すと、次の heartbeat までの間に同じフォルダの別のセッションが引き継ぎ、両方で回答を届けてしまう)。ライブ表示が開いていれば「セッションが終わりました」を待たずに送るだけで、受信サーバは止めない (Mod からの接触が 10 分途絶えると自分で終わる。pid と token はどこにも残さない) |
 | `ui.close` of `doc-desk` | 人が閉じても監視は続け、状態行に「/doc-desk-resume で開き直せます」を出す |
 
 監視タイマーは同期待ちの間 (`Pending.isSyncWaiting`) は回答を届けず、経過秒数の更新だけ行います。同期待ちを抜けたときにフラグを下ろすので、同じ回答が Tool result と user turn の両方で届くことはありません。
@@ -143,17 +195,17 @@ sequenceDiagram
 validate の印字:
 
 ```
-❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.stat, $.fs.write, $.http.fetch, $.model.fork, $.process.run, $.prompt.submit, $.prompt.suggest, $.session.id, $.store.delete, $.store.get, $.store.keys, $.store.set, $.tool.register, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
+❯ ./register.ts calls: $.clock.after, $.clock.every, $.clock.now, $.command.register, $.fs.exists, $.fs.read, $.fs.stat, $.fs.write, $.http.fetch, $.model.fork, $.process.run, $.prompt.submit, $.prompt.suggest, $.session.id, $.store.delete, $.store.get, $.store.keys, $.store.set, $.tool.register, $.turn.abort, $.ui.close, $.ui.invalidate, $.ui.log, $.ui.open, $.ui.resolve, $.ui.status, $.ui.toast
 ```
 
 `clock.after` (`/doc-desk-resume` の後に未送の回答を送る), `clock.every` (回答の監視と、待機の記録の heartbeat), `clock.now`,
 `command.register`, `fs.exists`, `fs.read`, `fs.stat` (書き込みの照合の realPath), `fs.write`,
-`http.fetch` (同期待ちの `GET /wait?t=…&timeout=4` と、引き継ぎの生死確認 `timeout=0`。127.0.0.1 の受信サーバへ),
+`http.fetch` (同期待ちの `GET /wait?t=…&timeout=4` と、引き継ぎの生死確認 `timeout=0`、ライブ表示の `POST /document` と `POST /finish`。127.0.0.1 の受信サーバへ),
 `model.fork` (`open_review` の中で、指摘の候補を 1 問だけ聞く),
 `process.run` (`<python> --version`、`<python> receiver.py` の `clean` / `start` / `open` / `stop`。シェルは使わない),
 `prompt.submit`, `prompt.suggest` (起動時に届いていた回答を送る `/doc-desk-resume` を候補に出す),
 `session.id` (待機の記録の持ち主), `store.get` / `store.set` / `store.delete` / `store.keys` (待機の記録 `pending:<cwd>:<セッション id>`),
-`tool.register`, `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`, `ui.toast` (引き継いだ回答の案内と、回答が届いたときの「回答を受け取りました: <label>」)。
+`tool.register`, `turn.abort` (ライブ指摘の [今すぐ止めて直す]), `ui.close`, `ui.invalidate`, `ui.log`, `ui.open`, `ui.resolve`, `ui.status`, `ui.toast` (引き継いだ回答の案内と、回答が届いたときの「回答を受け取りました: <label>」)。
 `$.plugin.root` も読みます (呼び出しではないので印字されません)。
 
 `$.process.run` は型定義で「CLI only」とされています。ここでの CLI は、ローカルで動く Claude Code のプロセスを指すと
@@ -186,6 +238,8 @@ abort したあとフックが動けるのが 5 秒 (`lingerMs`) だからです
 | `doc-desk/<label>.candidates.json` | 指摘の画面に出した Claude の候補 (`selfReview` が有効なときだけ。無ければ `[]`) |
 | `doc-desk/<label>.answer.json` | ブラウザが POST した回答 JSON (`open_form` は同じ label の前回のものを起動前に消す) |
 | `doc-desk/<label>.md` | 回答固定形 (Claude に送ったものと同じ) |
+| `doc-desk/<label>.json`、`.html` (ライブ表示) | `open_live` の `live` (検証済み) と、ライブ表示の HTML (文書の中身とトークンは含まない) |
+| `doc-desk/<label>.comments.json` (ライブ表示) | ライブ指摘と、その扱い (`context` / `prompt` / `review` / `dropped`) と時刻 |
 
 ## スキル
 
@@ -264,3 +318,4 @@ Windows では `SO_REUSEADDR` を付けず `SO_EXCLUSIVEADDRUSE` で listen す�
 - 指摘の候補 (2026-09-24 時点): `open_review` の `tool.call` の中で `$.model.fork` を待つ間がフック予算 (10 秒) に数えられないか (型定義では `$` 呼び出しの待ちは数えない)。fork に時間の上限を渡す欄 (`timeoutMs`) は `ModelForkRequest` に無いので、fork が長引くとツールの結果もその分遅れます。
 - 書き込みを止める (2026-09-24 時点): `tool.check` の `deny` の `reason` がモデルにそのまま届き、モデルが書き込みをやめるか。
 - 回答行の畳み (2026-09-24 時点): plugin の投入した user turn の行で `ui.render` の `UserMessage` が呼ばれ、畳んだ行が描かれるか。テストキットでは terminal と desktop の両方で通っています。
+- ライブ表示 (2026-09-26 時点。設計の 8 章): `input` チャンクが Write の引数で数十文字単位で届くか。`turn.step` で `yield` の前に `void fetch` を投げても transcript の描画が遅れないか。Desktop と `-p` でも main の `turn.step` と `$.turn.abort` が来るか。`turn.step` の中から `$.turn.abort` を呼べ、その後の `$.prompt.submit` が次の turn を始め、書きかけの Write がファイルに残らないか。`tool.call` の結果に足した `context` をモデルが同じ turn の次の step で読んで Edit に進むか。テストキットでは `turn.step` の stream、`turn.start`、`$.turn.abort` を模して通っています。`turn.step` のフックは、素通しの分岐も含めて `next()` で回し、最後の `done` の値 (下の結果) を返します (`for await` はその値を捨てるため)。受信サーバ (`--live`) の SSE、並べ直し、2 段の `/finish`、`/finish` の後の 409、`close`、自分で終わる 2 条件は Windows で手動で確かめました。

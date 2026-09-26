@@ -2,14 +2,16 @@ import type { On, PluginOptions, Timer } from 'claude-code'
 
 import { parseAnswer } from './form/answer'
 import { questionsOf, type FormV1 } from './form/form-v1'
-import { REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
+import { LIVE_INPUT_SCHEMA, REVIEW_INPUT_SCHEMA, TOOL_INPUT_SCHEMA } from './form/schema'
 import { validateForm } from './form/validate'
 import { buildDecisionRecord, isDecisionRecord, type SettledReply } from './compact/record'
 import { isSamePath, normalizePath, writeTargetOf } from './guard/paths'
 import type { Host } from './host'
+import { createLiveController, isLiveViewEnabled } from './live/controller'
 import {
   COMMAND_NAME,
   EVIDENCE_DIR,
+  LIVE_TOOL_NAME,
   PANE_ID,
   PLUGIN_NAME,
   REVIEW_TOOL_NAME,
@@ -600,7 +602,14 @@ export function register(on: On, options: PluginOptions = {}) {
   async function serveSheet(
     engine: Host,
     sheet: Sheet,
-    options: { nowMs: number; isBrowserWanted: boolean; waitSeconds: number; signal: AbortSignal },
+    options: {
+      nowMs: number
+      isBrowserWanted: boolean
+      waitSeconds: number
+      signal: AbortSignal
+      /** 受信サーバが立った直後に呼ぶ (ライブ表示のタブを移す) */
+      onServed?: (url: string) => Promise<void>
+    },
   ) {
     const { paths } = sheet
     // 同じ label を出し直すと前回の回答ファイルは消えるので、起動時に見つけた同じ label の未送の回答も捨てる
@@ -628,6 +637,7 @@ export function register(on: On, options: PluginOptions = {}) {
     })
     const { url } = current
 
+    await options.onServed?.(url)
     if (options.isBrowserWanted) {
       openBrowser(engine, url)
     }
@@ -886,6 +896,21 @@ export function register(on: On, options: PluginOptions = {}) {
     engine.status(STRINGS.carriedOverOf(sheet.kind, sheet.label))
   }
 
+  /** ライブ表示 (docs/doc-desk/live-view-design.md)。状態と振る舞いは hooks/live/controller.ts に閉じ込める */
+  const live = createLiveController({
+    host: () => host,
+    cwd: () => cwd,
+    isPending: () => pending !== null,
+    isPaneOpen: () => isPaneOpen,
+    pythonOf,
+    spellingsOf,
+    openBrowser,
+    openPane: engine => openPane(engine, false),
+    closePane,
+    tokenOf,
+    dateOf,
+  })
+
   on('session.start', async ($, e, next) => {
     cwd = e.cwd
 
@@ -911,6 +936,7 @@ export function register(on: On, options: PluginOptions = {}) {
       toast: text => $.ui.toast(text),
       submitPrompt: input => $.prompt.submit(input),
       suggest: input => $.prompt.suggest(input),
+      abortTurn: input => $.turn.abort(input),
       fork: request => $.model.fork(request),
       pluginRoot: $.plugin.root,
     }
@@ -919,6 +945,7 @@ export function register(on: On, options: PluginOptions = {}) {
     for (const tool of [
       { name: TOOL_NAME, description: STRINGS.toolDescription, inputSchema: TOOL_INPUT_SCHEMA },
       { name: REVIEW_TOOL_NAME, description: STRINGS.reviewToolDescription, inputSchema: REVIEW_INPUT_SCHEMA },
+      { name: LIVE_TOOL_NAME, description: STRINGS.liveToolDescription, inputSchema: LIVE_INPUT_SCHEMA },
     ]) {
       try {
         await $.tool.register(tool)
@@ -964,6 +991,7 @@ export function register(on: On, options: PluginOptions = {}) {
     }
     const { form } = validation
 
+    await live.close(engine)
     await dropPending(engine, 'replaced')
 
     const paths = pathsOf(form.label)
@@ -1034,19 +1062,51 @@ export function register(on: On, options: PluginOptions = {}) {
       }
     }
 
+    // 同じ文書のライブ表示が開いていれば、まだ届けていないライブ指摘を候補にし、同じタブを指摘の画面へ移す。
+    // 別の文書なら片付ける
+    const handoff = await live.takeForReview(engine, review.documentId)
+
     await dropPending(engine, 'replaced')
 
     const nowMs = await engine.now()
 
     await engine.writeFile(paths.form, `${JSON.stringify(review, null, 2)}\n`)
-    await engine.writeFile(paths.html, renderReviewHtml({ review, html, date: dateOf(nowMs), candidates }))
+    await engine.writeFile(
+      paths.html,
+      renderReviewHtml({ review, html, date: dateOf(nowMs), candidates: [...candidates, ...(handoff?.candidates ?? [])] }),
+    )
 
-    return serveSheet(engine, sheetOfReview(review, paths, isSelfReview), {
+    let isServed = false
+    const result = await serveSheet(engine, sheetOfReview(review, paths, isSelfReview), {
       nowMs,
-      isBrowserWanted: e.openBrowser !== false,
+      // ライブ表示のタブが移るので、そのときだけブラウザは開き直さない
+      isBrowserWanted: handoff ? e.openBrowser === true : e.openBrowser !== false,
       waitSeconds: clampWaitSeconds(e.waitSeconds),
       signal: next.signal,
+      ...(handoff && {
+        onServed: (url: string) => {
+          isServed = true
+          return handoff.serve(url)
+        },
+      }),
     })
+    // 指摘の画面を出せなかった (受信サーバが起動しない)。ライブ表示の受信サーバを止める
+    // (ライブ指摘は指摘の画面の HTML と .comments.json に残る)
+    if (handoff && !isServed) {
+      await handoff.abandon()
+    }
+    return result
+  })
+
+  on('tool.call', { tool: 'mcp__doc-desk__open_live' }, async ($, e, next) => {
+    const engine = host
+    if (!engine) {
+      return { result: JSON.stringify({ status: 'failed', reason: 'session.start がまだ実行されていません' }) }
+    }
+    if (!isLiveViewEnabled(options)) {
+      return { result: JSON.stringify({ status: 'disabled' }) }
+    }
+    return live.open(engine, { live: e.live, openBrowser: e.openBrowser })
   })
 
   on('command.run', { command: COMMAND_NAME }, async () => {
@@ -1083,7 +1143,13 @@ export function register(on: On, options: PluginOptions = {}) {
 
     const current = pending
     if (!current) {
-      return { text: STRINGS.nothingPending }
+      const writing = live.current()
+      if (!writing) {
+        return { text: STRINGS.nothingPending }
+      }
+      await openPane(engine, true)
+      openBrowser(engine, writing.url)
+      return { text: STRINGS.liveReopenedOf(writing.url) }
     }
     await openPane(engine, true)
     openBrowser(engine, current.url)
@@ -1093,11 +1159,36 @@ export function register(on: On, options: PluginOptions = {}) {
   on('ui.render', { component: 'Pane' }, ($, e, next) => {
     const engine = host
     const current = pending
-    if (e.requestId !== PANE_ID || !engine || !current) {
+    const writing = live.current()
+    if (e.requestId !== PANE_ID || !engine || (!current && !writing)) {
       return next(e)
     }
 
     const { Box, Text, Button, Link } = $.ui.resolve(e)
+
+    // 回答待ちの画面が無ければ、ライブ表示を描く
+    if (!current && writing) {
+      return paneView(
+        { Box, Text, Button, Link },
+        {
+          heading: STRINGS.liveHeaderOf(writing.input.label),
+          url: writing.url,
+          linkUrl: writing.linkUrl,
+          elapsedSeconds: live.elapsedSeconds(),
+          prompt: STRINGS.liveInBrowser,
+          stateLine: STRINGS.liveStateOf(writing.state || STRINGS.liveWaiting, live.elapsedSeconds()),
+        },
+        {
+          openBrowser: () => openBrowser(engine, writing.url),
+          cancel: () => {
+            void live.close(engine).then(() => engine.uiLog(STRINGS.liveCancelled))
+          },
+        },
+      )
+    }
+    if (!current) {
+      return next(e)
+    }
 
     return paneView(
       { Box, Text, Button, Link },
@@ -1129,8 +1220,33 @@ export function register(on: On, options: PluginOptions = {}) {
     return replyRow({ Box, Text }, summary, mdPathOfReply.get(e.props.text))
   })
 
+  on('turn.start', async ($, e, next) => {
+    live.onTurnStart(e.turnId)
+    return next(e)
+  })
+
+  on('turn.step', async function* ($, e, next) {
+    // ライブ表示が開いていなければ observer は null (素通し)。subagent の step は見ない (文書は main の turn で書く)
+    const observer = live.observeStep(e.agentId)
+    const stream = next(e)
+    try {
+      // 下の結果は next() の最後の値 (done の value) から取る (for await はそれを捨てる)
+      for (let step = await stream.next(); ; step = await stream.next()) {
+        if (step.done) {
+          return step.value
+        }
+        // チャンクは書き換えず、遅らせない (送信は待たずに投げる)
+        yield step.value
+        observer?.chunk(step.value)
+      }
+    } finally {
+      observer?.end()
+    }
+  })
+
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
+    live.onTurnComplete(e)
     const current = pending
     if (e.agentId !== undefined || e.reason !== 'answer' || !current || current.isUrlShown) {
       return result
@@ -1193,6 +1309,9 @@ export function register(on: On, options: PluginOptions = {}) {
     return null
   }
 
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => live.afterWrite(e, await next(e)))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => live.afterWrite(e, await next(e)))
+
   on('tool.check', { tool: 'Write' }, async ($, e, next) => (await guardWrite(e)) ?? next(e))
   on('tool.check', { tool: 'Edit' }, async ($, e, next) => (await guardWrite(e)) ?? next(e))
   on('tool.check', { tool: 'NotebookEdit' }, async ($, e, next) => (await guardWrite(e)) ?? next(e))
@@ -1237,6 +1356,9 @@ export function register(on: On, options: PluginOptions = {}) {
     if (e.reason === 'clear' || e.reason === 'resume') {
       return next(e)
     }
+    // ライブ表示は残す (人がまだ読んでいるかもしれない)。状態だけ投げっぱなしにする。
+    // 受信サーバは Mod からの接触が途絶えると自分で終わる
+    live.onSessionEnd()
     const owned = ownedRecord
     if (owned && host) {
       await host.storeSet(recordKeyOf(cwd, sessionId), { ...owned, heartbeatAtMs: 0 }).catch(() => undefined)
