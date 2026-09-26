@@ -1,6 +1,6 @@
 # 回答固定形 v1 — 【doc-desk 回答】の契約と読み方
 
-人がブラウザで [送信] を押すと、Mod (`hooks/reply/format.ts`) が回答 JSON と質問票からこの固定形を作り、Claude に届けます。届き方は 2 つあります。`open_form` の `waitSeconds` (既定 300 秒) 以内に届いたときは、ツールの結果 `{ "status": "answered", "reply": "<この固定形>" }` の `reply` です。過ぎたあとに届いたときは `$.prompt.submit` による user turn です。どちらも文は同じで、同じ文を `doc-desk/<label>.md` にも書きます (ファイルは末尾に改行 1 つが付きます)。Claude はこの形だけを読みます。指摘の画面 (`open_review`) の固定形は `references/review-mode.md` の 5 章にあります (Claude の候補を人が採用した指摘には、行末に `(Claude の候補)` が付きます)。
+人がブラウザで [送信] を押すと、Mod (`hooks/reply/format.ts`) が回答 JSON と質問票からこの固定形を作り、Claude に届けます。届き方は 2 つあります。`open_form` の `waitSeconds` (既定 300 秒) 以内に届いたときは、ツールの結果 `{ "status": "answered", "reply": "<この固定形>" }` の `reply` です。過ぎたあとに届いたときは `$.prompt.submit` による user turn です。どちらも文は同じで、同じ文を `doc-desk/<label>.md` にも書きます (ファイルは末尾に改行 1 つが付きます)。Claude はこの形だけを読みます。指摘の画面 (`open_review`) の固定形は `references/review-mode.md` の 5 章にあります (Claude の候補を人が採用した指摘には、行末に `(Claude の候補)` が、ライブ表示で付けた指摘を人が採用したものには `(ライブ指摘)` が付きます)。
 
 ## 形
 

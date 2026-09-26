@@ -71,6 +71,8 @@ export type PythonCommand = 'python3' | 'python' | 'py' | null
 export type WorldOptions = {
   /** false なら receiver.py start が何も印字せずに終わる (起動失敗を模す) */
   isReceiverUp?: boolean
+  /** 受信サーバの起動がこの回数までは成功し、以後は失敗する (ライブ表示の後の指摘の画面だけを失敗させる) */
+  receiverStartsUp?: number
   /** `--version` に Python 3 と答えるコマンド。省略時は `python3` */
   python?: PythonCommand
   /** `GET /wait` の答え。省略時は毎回 `{ answered: false }` (timeout まで回答が無かった) */
@@ -89,6 +91,27 @@ export type WorldOptions = {
   links?: Record<string, string>
   /** `$.model.fork` の答え。省略時は `nothing-to-fork` (会話がまだ無い) */
   forkReply?: ModelForkResult
+  /** ライブ表示の受信サーバの `POST /document` と `POST /finish` の答え。省略時は指摘なし、止めない */
+  liveReply?: (call: LiveCall) => LiveReply | 'error'
+  /** true なら `$.turn.abort` を断る (止める turn が違う) */
+  refuseAbort?: boolean
+}
+
+/**
+ * 模したライブ表示の受信サーバへの POST 1 回分。
+ */
+export type LiveCall = {
+  /** `/document` か `/finish` */
+  path: string
+  body: Record<string, unknown>
+}
+
+/**
+ * 模したライブ表示の受信サーバの答え。
+ */
+export type LiveReply = {
+  comments?: unknown[]
+  stop?: boolean
 }
 
 /**
@@ -133,7 +156,12 @@ export function world(on: On, options: WorldOptions = {}) {
   const toasts: string[] = []
   const suggested: string[] = []
   const forkPrompts: string[] = []
+  /** ライブ表示の受信サーバへの POST (送った順) */
+  const livePosts: LiveCall[] = []
+  /** `$.turn.abort` に渡された turnId */
+  const aborted: string[] = []
   let invalidations = 0
+  let startCount = 0
 
   const clock = mock.clock(on, { now: Date.UTC(2026, 8, 22, 12, 0, 0) })
 
@@ -225,7 +253,8 @@ export function world(on: On, options: WorldOptions = {}) {
     }
 
     if (command === 'start') {
-      if (options.isReceiverUp === false) {
+      startCount += 1
+      if (options.isReceiverUp === false || (options.receiverStartsUp !== undefined && startCount > options.receiverStartsUp)) {
         return { value: { exitCode: 1, stdout: '', stderr: '' } }
       }
       // --port があり、塞がっていなければその port を使う (receiver.py と同じ)
@@ -238,6 +267,17 @@ export function world(on: On, options: WorldOptions = {}) {
   })
 
   on('http.fetch', async ($, e) => {
+    const path = new URL(e.url).pathname
+    if (path === '/document' || path === '/finish') {
+      const call: LiveCall = { path, body: JSON.parse(e.init?.body ?? '{}') as Record<string, unknown> }
+      livePosts.push(call)
+      const reply = (options.liveReply ?? ((): LiveReply | 'error' => ({})))(call)
+      if (reply === 'error') {
+        return { deny: `ECONNREFUSED: ${e.url}` }
+      }
+      const text = JSON.stringify({ ok: true, comments: reply.comments ?? [], stop: reply.stop ?? false })
+      return { value: { status: 200, ok: true, headers: { 'content-type': 'application/json' }, text } }
+    }
     const timeout = /[?&]timeout=(\d+)/.exec(e.url)?.[1]
     // 引き継ぎの生死確認 (timeout=0) も /wait として数える
     const call: WaitCall = { url: e.url, timeoutSeconds: Number(timeout ?? 0), count: fetched.length + 1 }
@@ -292,6 +332,29 @@ export function world(on: On, options: WorldOptions = {}) {
   // core は答えの文をそのまま返す
   on('turn.complete', ($, e) => ({ text: e.answer, ...(e.usage && { usage: e.usage }) }))
 
+  on('turn.start', ($, e) => ({ turnId: e.turnId }))
+
+  on('turn.abort', ($, e) => {
+    if (options.refuseAbort) {
+      return { deny: `turn ${e.turnId} is not running` }
+    }
+    aborted.push(e.turnId)
+    return { value: undefined }
+  })
+
+  // Write と Edit は Map のファイルに書く (core の代わり。相対パスはセッションの cwd /work から)
+  const absolute = (path: string) => (keyOf(path).startsWith('/') ? keyOf(path) : `/work/${path}`)
+  on('tool.call', { tool: 'Write' }, ($, e) => {
+    files.set(absolute(e.file_path), e.content)
+    return { result: { type: 'create', filePath: e.file_path, content: e.content, structuredPatch: [], originalFile: null } }
+  })
+
+  on('tool.call', { tool: 'Edit' }, ($, e) => {
+    const before = files.get(absolute(e.file_path)) ?? ''
+    files.set(absolute(e.file_path), before.replace(e.old_string, e.new_string))
+    return { result: 'edited' as never }
+  })
+
   on('model.fork', ($, e) => {
     forkPrompts.push(e.prompt)
     return { value: options.forkReply ?? { isAnswered: false as const, reason: 'nothing-to-fork' as const } }
@@ -321,6 +384,8 @@ export function world(on: On, options: WorldOptions = {}) {
     toasts,
     suggested,
     forkPrompts,
+    livePosts,
+    aborted,
     registeredTools,
     registeredCommands,
     clock,

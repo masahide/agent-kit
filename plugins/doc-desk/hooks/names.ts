@@ -24,6 +24,16 @@ export const REVIEW_TOOL_NAME = 'open_review'
 export const FULL_REVIEW_TOOL_NAME = `mcp__${PLUGIN_NAME}__${REVIEW_TOOL_NAME}`
 
 /**
+ * ライブ表示 (書いている文書をブラウザに流す) を開くツールの短い名前。
+ */
+export const LIVE_TOOL_NAME = 'open_live'
+
+/**
+ * `tool.call` の絞り込みに使う、ライブ表示のツールの完全な名前。
+ */
+export const FULL_LIVE_TOOL_NAME = `mcp__${PLUGIN_NAME}__${LIVE_TOOL_NAME}`
+
+/**
  * `/doc-desk-resume` コマンドの名前。
  */
 export const COMMAND_NAME = 'doc-desk-resume'

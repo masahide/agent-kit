@@ -20,6 +20,10 @@ export type PaneModel = {
   linkUrl: string
   /** 待ち始めてからの秒数 */
   elapsedSeconds: number
+  /** 2 行目。省略時は「ブラウザで回答してください:」 (ライブ表示は別の文) */
+  prompt?: string
+  /** 状態行。省略時は「状態: 回答を待っています (n 秒経過)」 (ライブ表示は書いている状態) */
+  stateLine?: string
 }
 
 /**
@@ -51,10 +55,10 @@ export function paneView(kit: PaneKit, model: PaneModel, actions: PaneActions): 
     paddingRight: 1,
     children: [
       Text({ bold: true, children: model.heading }),
-      Text({ children: STRINGS.answerInBrowser }),
+      Text({ children: model.prompt ?? STRINGS.answerInBrowser }),
       Text({ wrap: 'wrap', children: model.url }),
       Link({ href: model.linkUrl, label: STRINGS.openLink }),
-      Text({ dimColor: true, children: STRINGS.waitingOf(model.elapsedSeconds) }),
+      Text({ dimColor: true, children: model.stateLine ?? STRINGS.waitingOf(model.elapsedSeconds) }),
       Box({
         flexDirection: 'row',
         gap: 2,

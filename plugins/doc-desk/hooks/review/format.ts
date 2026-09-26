@@ -15,6 +15,11 @@ export const REVIEW_CLOSING =
 export const CANDIDATE_MARK = '(Claude の候補)'
 
 /**
+ * ライブ表示で付けた指摘を、人が指摘の画面で採用した指摘の行末に付ける印。
+ */
+export const LIVE_MARK = '(ライブ指摘)'
+
+/**
  * 「指摘した段落」に載せる段落の文字数の上限。超えた分は「…」にします。
  */
 export const MAX_BLOCK_EXCERPT = 400
@@ -114,6 +119,7 @@ export function formatReviewReply(review: ReviewV1, answer: ReviewAnswerV1): str
       const text = flattened(comment.text)
       if (text !== '') parts.push(text)
       if (comment.source === 'claude') parts.push(CANDIDATE_MARK)
+      if (comment.source === 'live') parts.push(LIVE_MARK)
       lines.push(parts.join(' '))
     }
 

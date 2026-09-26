@@ -1,6 +1,6 @@
 import { BLOCK_TAGS, DOCUMENT_ATTRIBUTES, DOCUMENT_TAGS } from '../review/document'
 import type { ReviewCandidate } from '../review/candidates'
-import { CANDIDATE_MARK } from '../review/format'
+import { CANDIDATE_MARK, LIVE_MARK } from '../review/format'
 import { KEEP_CHIP, REVIEW_CHIPS, type ReviewV1 } from '../review/review-v1'
 import { escapeHtml, safeJson, STYLE } from './common'
 
@@ -14,7 +14,7 @@ export type ReviewSheetInput = {
   html: string
   /** 上部バーに出す日付 (YYYY-MM-DD) */
   date: string
-  /** Claude が自分の文書に付けた指摘の候補 (`review/candidates.ts`)。無ければ省略 */
+  /** Claude が自分の文書に付けた指摘の候補と、ライブ表示で付けてまだ届けていない指摘 (`source: 'live'`)。無ければ省略 */
   candidates?: readonly ReviewCandidate[]
 }
 
@@ -101,7 +101,7 @@ const REVIEW_STYLE = `
  * - 段落 (自分の文字を持つ h2〜h4、p、li、dt、dd と、pre、表の行) に上から番号を振り、押せる領域にする
  * - 段落を押すか、1 つの段落の中で文字列を選ぶと、右に指摘の操作を出す。チップとコメントで指摘を足す
  * - 指摘を付けた段落に、指摘の通し番号の小さな印を付ける。何も選んでいないときは指摘の一覧を出す
- * - Claude の候補 (data.candidates) を段落の帯と右の一覧に出し、[採用] で指摘に入れ、[却下] で消す
+ * - Claude の候補とライブ表示で付けた指摘 (data.candidates) を段落の帯と右の一覧に出し、[採用] で指摘に入れ、[却下] で消す
  * - 指摘と全体コメントの下書きを localStorage に保存して復元
  * - [送信] で回答 JSON を `/answer?t=<token>` に POST (token は URL の `?t=` から読む)、失敗時の代替導線
  */
@@ -113,6 +113,8 @@ const SCRIPT = `
   var BLOCKS = ${JSON.stringify(BLOCK_TAGS)};
   var KEEP = ${JSON.stringify(KEEP_CHIP)};
   var CANDIDATE_MARK = ${JSON.stringify(CANDIDATE_MARK)};
+  var LIVE_MARK = ${JSON.stringify(LIVE_MARK)};
+  var SOURCE_LABELS = { claude: 'Claude の候補', live: 'ライブ指摘' };
   var INLINE = { STRONG: true, EM: true, CODE: true, SPAN: true, BR: true };
   var data = JSON.parse(document.getElementById('di-review').textContent);
   var review = data.review;
@@ -225,7 +227,21 @@ const SCRIPT = `
         if (blocks[i].text.indexOf(quote) >= 0) { block = i + 1; break; }
       }
     }
-    return { block: block, chip: c.chip, quote: block ? quote : '', text: block || !quote ? c.text : '「' + quote + '」 ' + c.text, state: 'open' };
+    var source = c.source === 'live' ? 'live' : 'claude';
+    var chip = source === 'live' ? null : c.chip;
+    return { block: block, chip: chip, quote: block ? quote : '', text: block || !quote ? c.text : '「' + quote + '」 ' + c.text, source: source, state: 'open' };
+  });
+
+  // 候補の欄の見出しを、候補の出どころに合わせる
+  var hasClaude = candidates.some(function (c) { return c.source === 'claude'; });
+  var hasLive = candidates.some(function (c) { return c.source === 'live'; });
+  all('[data-cand-label]').forEach(function (el) {
+    el.textContent = hasLive ? (hasClaude ? 'Claude の候補とライブ指摘' : 'ライブ表示で付けた指摘') : 'Claude の候補';
+  });
+  all('[data-cand-help]').forEach(function (el) {
+    if (!hasLive) return;
+    el.textContent = (hasClaude ? 'Claude が自分で見つけた直しどころと、' : '') +
+      'ライブ表示で付けて、まだ Claude に届いていなかった指摘です。[採用] で指摘に入り、[却下] で消えます。選ばなかったものは送りません。';
   });
 
   // 元の姿は、全部の段落に番号を振り終えてから複製する (段落の中の段落にも blk と data-n が付いた姿を残すため。
@@ -283,10 +299,10 @@ const SCRIPT = `
     }
     var body = document.createElement('span');
     body.className = 'c-body';
-    if (entry.comment.source === 'claude') {
+    if (SOURCE_LABELS[entry.comment.source]) {
       var src = document.createElement('span');
       src.className = 'c-src';
-      src.textContent = 'Claude の候補';
+      src.textContent = SOURCE_LABELS[entry.comment.source];
       body.appendChild(src);
     }
     if (entry.comment.chip) {
@@ -552,10 +568,12 @@ const SCRIPT = `
         quote: candidate.quote,
         text: candidate.text,
         range: at >= 0 ? [at, at + candidate.quote.length] : null,
-        source: 'claude'
+        source: candidate.source
       });
     } else if (globalEl) {
-      var line = '[' + candidate.chip + '] ' + candidate.text + ' ' + CANDIDATE_MARK;
+      var line = candidate.source === 'live'
+        ? candidate.text + ' ' + LIVE_MARK
+        : '[' + candidate.chip + '] ' + candidate.text + ' ' + CANDIDATE_MARK;
       globalEl.value = globalEl.value ? globalEl.value.replace(/\\s+$/, '') + '\\n' + line : line;
     }
     candidate.state = 'adopted';
@@ -596,8 +614,8 @@ const SCRIPT = `
       var body = document.createElement('span');
       body.className = 'c-body';
       var c = document.createElement('span');
-      c.className = 'c-chip';
-      c.textContent = candidate.chip;
+      c.className = candidate.chip ? 'c-chip' : 'c-src';
+      c.textContent = candidate.chip || SOURCE_LABELS[candidate.source];
       body.appendChild(c);
       if (candidate.quote) {
         var q = document.createElement('span');
@@ -653,7 +671,7 @@ const SCRIPT = `
       var tag = document.createElement('span');
       tag.className = 'ctag';
       tag.setAttribute('aria-hidden', 'true');
-      tag.textContent = 'Claude の候補';
+      tag.textContent = openCandidates(index + 1).some(function (c) { return c.source === 'claude'; }) ? SOURCE_LABELS.claude : SOURCE_LABELS.live;
       host.insertBefore(tag, host.firstChild);
     });
     var byBlock = Object.create(null);
@@ -682,7 +700,7 @@ const SCRIPT = `
     var sortedEdits = edits.slice().sort(function (a, b) { return a.block - b.block; });
     fillEdits(editAllEl, sortedEdits, true, '書き換えはまだありません。');
     candAllSecEl.hidden = candidates.length === 0;
-    fillCandidates(candAllEl, openCandidates(), true, 'Claude の候補はすべて選びました。');
+    fillCandidates(candAllEl, openCandidates(), true, '候補はすべて選びました。');
     if (current) {
       fill(blockListEl, entries.filter(function (entry) { return entry.comment.block === current.block; }), false, 'この段落の指摘はまだありません。');
       fillEdits(editListEl, editsOf(current.block), false, 'この段落の書き換えはまだありません。');
@@ -955,7 +973,7 @@ const SCRIPT = `
       comments: comments.map(function (comment) {
         var item = { block: comment.block, chip: comment.chip, quote: comment.quote, text: comment.text };
         if (comment.range) item.range = comment.range;
-        if (comment.source === 'claude') item.source = 'claude';
+        if (SOURCE_LABELS[comment.source]) item.source = comment.source;
         return item;
       }),
       edits: edits.map(function (edit) {
@@ -990,7 +1008,7 @@ const SCRIPT = `
         text: typeof comment.text === 'string' ? comment.text : '',
         range: Array.isArray(comment.range) && comment.range.length === 2 &&
           typeof comment.range[0] === 'number' && typeof comment.range[1] === 'number' ? comment.range : null,
-        source: comment.source === 'claude' ? 'claude' : undefined
+        source: SOURCE_LABELS[comment.source] ? comment.source : undefined
       });
     });
     (Array.isArray(saved.edits) ? saved.edits : []).forEach(function (edit) {
@@ -1095,8 +1113,8 @@ function overviewHtml(): string {
     `<div data-stat="edits"><dt>書き換え</dt><dd>0</dd></div>` +
     `<div data-stat="blocks"><dt>指摘した段落</dt><dd>0</dd></div>` +
     `<div data-stat="total"><dt>段落</dt><dd>0</dd></div></dl>` +
-    `<div class="p-sec" id="di-cand-all-sec" hidden><p class="p-label">Claude の候補</p><div id="di-cand-all"></div>` +
-    `<p class="help">Claude が自分で見つけた直しどころです。[採用] で指摘に入り、[却下] で消えます。選ばなかった候補は送りません。</p></div>` +
+    `<div class="p-sec" id="di-cand-all-sec" hidden><p class="p-label" data-cand-label>Claude の候補</p><div id="di-cand-all"></div>` +
+    `<p class="help" data-cand-help>Claude が自分で見つけた直しどころです。[採用] で指摘に入り、[却下] で消えます。選ばなかった候補は送りません。</p></div>` +
     `<div class="p-sec"><p class="p-label">指摘の一覧</p><div id="di-list"></div></div>` +
     `<div class="p-sec"><p class="p-label">書き換えの一覧</p><div id="di-edit-all"></div></div>` +
     `<div class="p-sec"><label><span class="p-label">全体へのコメント</span>` +
@@ -1120,7 +1138,7 @@ function blockPanelHtml(): string {
     `<div class="add-row"><input type="text" class="note" id="di-text" placeholder="コメント (任意、1 行)" aria-label="コメント">` +
     `<button type="button" class="btn primary" id="di-add" disabled>指摘を足す</button></div>` +
     `<p class="help">チップかコメントのどちらかがあれば足せます。1 つの段落に何件でも付けられます。</p></div>` +
-    `<div class="p-sec" id="di-cand-block-sec" hidden><p class="p-label">Claude の候補</p><div id="di-cand-block"></div></div>` +
+    `<div class="p-sec" id="di-cand-block-sec" hidden><p class="p-label" data-cand-label>Claude の候補</p><div id="di-cand-block"></div></div>` +
     `<div class="p-sec"><p class="p-label">この段落の指摘</p><div id="di-block-list"></div></div>` +
     `<div class="p-sec"><p class="p-label">直接直す</p><div class="edit-actions">` +
     `<button type="button" class="btn ghost" data-edit="rewrite">書き換える</button>` +

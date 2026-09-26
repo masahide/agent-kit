@@ -27,7 +27,7 @@ export const STRINGS = {
   /** [取り消す] ボタン */
   cancel: '取り消す',
   /** 待機中の画面が無いときの `/doc-desk-resume` の返答 */
-  nothingPending: '待機中の質問票も指摘の画面もありません',
+  nothingPending: '待機中の質問票も指摘の画面も、開いているライブ表示もありません',
   /** 待機中に `/doc-desk-resume` を実行したときの返答 */
   reopenedOf: (url: string) => `インタビューのペインとブラウザを開き直しました: ${url}`,
   /** 起動時に、前のセッションの回答が届いていたとき (トランスクリプト行と通知) */
@@ -119,7 +119,58 @@ export const STRINGS = {
     '結果の status は open_form と同じです。"answered" なら reply の ## 指摘 を反映して文書を直してください。' +
     '"pending" なら指摘は後で【doc-desk 回答】で始まる user turn として届くので、文書を直さずにターンを終えてください。',
   /** コマンドの説明 */
-  commandDescription: '待機中の質問票か指摘の画面を開き直す。前回の回答が未送なら Claude に送る',
+  commandDescription: '待機中の質問票か指摘の画面、またはライブ表示を開き直す。前回の回答が未送なら Claude に送る',
+  /** ツール open_live の説明 (モデル向け) */
+  liveToolDescription:
+    '文書を書き始める前に呼ぶと、これから source に Write と Edit で書く文をブラウザに流して、人が書いている途中から読めるようにします (ライブ表示)。' +
+    'live に documentId、label (質問票や指摘の画面と別の名前)、source (質問票の source と同じパス)、title を渡します。' +
+    '文書は Bash ではなく Write と Edit で書いてください。書き終えたら、閉じずにそのまま open_review を同じ documentId で呼ぶと、同じタブが指摘の画面へ移ります。' +
+    '人が読みながら付けた指摘 (【doc-desk ライブ指摘】) は、Write の結果に添えて届くか、ターンを止めて user turn として届きます。届いたら反映してから先へ進んでください。' +
+    '結果の status: "opened" = 開きました。"invalid" = errors を直して再送。"disabled" = 設定で切られているので、呼ばずに書いてください。"failed" = reason を人に伝え、そのまま書いてください。',
+  /** open_live の opened の結果に添える context */
+  liveOpenedContext:
+    'ライブ表示を開きました。文書を source に Write と Edit で書いてください (Bash では書かない)。' +
+    '書き終えたら open_review を同じ documentId で呼んでください。【doc-desk ライブ指摘】が届いたら、先へ進む前に反映してください。',
+  /** 回答待ちの画面があるのに open_live を呼んだとき */
+  livePendingExists: '回答待ちの画面があります。回答が届いてから文書を書き、その直前に open_live を呼んでください',
+  /** ライブ表示のペインの 1 行目 */
+  liveHeaderOf: (label: string) => `ライブ表示: ${label}`,
+  /** ライブ表示のペインの 2 行目 */
+  liveInBrowser: 'ブラウザで書いている文書を読めます:',
+  /** ライブ表示のペインの状態行 */
+  liveStateOf: (state: string, seconds: number) => `状態: ${state} (${seconds} 秒経過)`,
+  /** ライブ表示の状態 (受信サーバの SSE で画面に流す) */
+  liveWaiting: '書き始めるのを待っています',
+  liveWriting: '書いています',
+  liveFixing: '直しています',
+  liveDone: '書き終わりました',
+  liveStopped: '止めて書き直しを頼みました',
+  liveAborted: '中断しました',
+  liveSessionEnded: 'セッションが終わりました',
+  /** ライブ表示を /doc-desk-resume で開き直したとき */
+  liveReopenedOf: (url: string) => `ライブ表示のペインとブラウザを開き直しました: ${url}`,
+  /** 書き終わった turn に、まだ届けていないライブ指摘があるとき */
+  liveUndeliveredOf: (count: number) =>
+    `ライブ指摘が ${count} 件、まだ Claude に届いていません。次の Write か open_review で届きます`,
+  /** [今すぐ止めて直す] を受けたが、止める turn が分からないとき */
+  liveNoTurnToStop: 'ライブ指摘の [今すぐ止めて直す] を受けましたが、止める turn が分からないので、次の Write の後に届けます',
+  /** turn を止めた後の投入に失敗したとき */
+  liveStopSubmitFailed: 'ライブ指摘で turn を止めましたが、書き直しの依頼を送れませんでした。指摘はライブ表示に残っています',
+  /** ライブ表示を [取り消す] で閉じたとき */
+  liveCancelled: 'ライブ表示を閉じました',
+  /** 受信サーバが流す状態 (文言を持たない `moving` と `closed`) の画面の文。キーは `closed` の理由 */
+  liveMoving: '指摘の画面へ移ります',
+  liveClosedOf: {
+    replaced: '新しい画面に置き換わりました',
+    lost: 'セッションとの接続が切れたので、ライブ表示を終えました',
+    closed: 'ライブ表示を閉じました',
+  },
+  /** 画面で、文書が長くて末尾だけ出しているとき */
+  liveTruncated: '長いので末尾の 10 万文字だけ表示しています。',
+  /** keepalive が続けて失敗し、ライブ表示を閉じたとき */
+  liveReceiverGone: 'ライブ表示の受信サーバが終わっていました。open_live で開き直せます',
+  /** open_live の受信サーバの起動に失敗したときの理由の後ろに付ける文 */
+  liveFallback: 'ライブ表示は無しで、そのまま文書を書いてください',
   /** 文書の HTML ファイルが無いとき */
   noDocument: 'ファイルがありません。書き上げた文書を HTML にして、この場所に書き出してから呼んでください',
   /** 文書の HTML ファイルを読めないとき */

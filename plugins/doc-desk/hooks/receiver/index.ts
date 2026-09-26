@@ -98,6 +98,20 @@ export function receiverArgv(
 }
 
 /**
+ * ライブ表示の受信サーバを切り離して起動する argv (`start --live`)。回答は受けないので `--out` はありません。
+ * pid と token はどこにも残しません。受信サーバは HTML の書き換えか Mod からの接触の途絶で自分で終わります。
+ *
+ * @param python Python 3 を起動する argv
+ * @param paths plugin.json のあるディレクトリとライブ表示の HTML
+ * @param token `?t=` で照合するトークン
+ */
+export const liveReceiverArgv = (
+  python: readonly string[],
+  paths: Pick<ReceiverPaths, 'pluginRoot' | 'html'>,
+  token: string,
+): string[] => [...python, scriptOf(paths.pluginRoot), 'start', '--live', '--token', token, '--html', paths.html]
+
+/**
  * `receiver.py start` の stdout を読みます。最初の空でない行が `{"port": n, "pid": n}` でなければ null。
  */
 export function parseStartOutput(stdout: string): ReceiverInfo | null {
@@ -142,6 +156,18 @@ export const linkUrlOf = (port: number, token: string): string =>
  */
 export const waitUrlOf = (port: number, token: string, timeoutSeconds: number): string =>
   `http://127.0.0.1:${port}/wait?t=${encodeURIComponent(token)}&timeout=${timeoutSeconds}`
+
+/**
+ * ライブ表示の受信サーバへ文書を送る `POST /document` の URL。応答に人のライブ指摘と「止めて」の印が載ります。
+ */
+export const documentUrlOf = (port: number, token: string): string =>
+  `http://127.0.0.1:${port}/document?t=${encodeURIComponent(token)}`
+
+/**
+ * ライブ表示を終える `POST /finish` の URL。本文 `{}` で未渡しの指摘を受け取り、`{ url }` でタブを移して終了させます。
+ */
+export const finishUrlOf = (port: number, token: string): string =>
+  `http://127.0.0.1:${port}/finish?t=${encodeURIComponent(token)}`
 
 /**
  * ブラウザを開く argv。receiver.py の `open` が OS ごとの方法 (macOS は open、

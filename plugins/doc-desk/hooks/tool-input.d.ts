@@ -21,5 +21,10 @@ declare module 'claude-code' {
       /** Claude の指摘の候補を画面に出すか。既定 true (plugin の設定 selfReview が false なら出さない) */
       selfReview?: boolean
     }
+    /** これから書く文書をライブ表示に流し始める (書き終えたら open_review でタブが指摘の画面へ移る) */
+    'mcp__doc-desk__open_live': {
+      live: unknown
+      openBrowser?: boolean
+    }
   }
 }

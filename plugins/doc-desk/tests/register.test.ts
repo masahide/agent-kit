@@ -10,12 +10,12 @@ tier('user')
 const ANSWER_PATH = '/work/doc-desk/spec-auth-01.answer.json'
 
 describe('register', () => {
-  test('session.start でツール open_form と open_review と /doc-desk-resume が登録される', async ($, on) => {
+  test('session.start でツール open_form と open_review と open_live と /doc-desk-resume が登録される', async ($, on) => {
     const world = Fixtures.world(on)
 
     await $.session.start(Fixtures.SESSION)
 
-    expect(world.registeredTools).toEqual(['open_form', 'open_review'])
+    expect(world.registeredTools).toEqual(['open_form', 'open_review', 'open_live'])
     expect(world.registeredCommands).toEqual(['doc-desk-resume'])
   })
 
