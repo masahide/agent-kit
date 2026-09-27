@@ -571,6 +571,14 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 | C6 | 実行中の turn の ID | `thread/turns/list { limit: 1 }` (既定で新しい順) の先頭が `inProgress` ならその ID。`turn/steer` は `expectedTurnId` が違えば `-32600`、実行中の turn が無ければ「no active turn to steer」 |
 | C7 | `thread/unsubscribe` で降ろせるか | 降りない (読み込まれたまま)。`thread/archive` は実行中の turn を止めて `notLoaded` にする。→ Codex の `stop` は `turn/interrupt` だけにする |
 
+Windows での確認 (2026-09-27、Windows、Claude Code 2.1.280、Claude Desktop 内の Claude Code 2.1.281、agentctl 0.1.1):
+
+- `irm ... | iex` のインストーラで入り、ユーザーの PATH で動いた。
+- `sessions list` が Claude Desktop のセッション (`surface: desktop`、題名は `ai-title`) と terminal のセッションを出した。
+- terminal のセッションで Mod が読み込まれ (`CLAUDE_CODE_PLUGIN_DIRS` に `;` 区切りで追加)、`send` → `wait` → `messages` が通った。
+- 見つけて直したこと: Git for Windows があると Mod の `sh -c 'echo $PPID'` が MSYS の pid を返し、記録の pid と一致しないので Mod なしと判定していた (0.1.1 で、`mod.json` がプロセスの起動より後なら Mod ありとみなすよう直した)。
+- 残り: Claude Desktop のセッションでの Mod の読み込み (C4)、codex (この機械には未導入)。
+
 ほかに分かったこと:
 
 - Codex の control socket は WebSocket を話す。`codex app-server proxy` はバイトの中継なので、使っても WebSocket は自前で要る。→ agentctl は socket に直接つなぐ。
