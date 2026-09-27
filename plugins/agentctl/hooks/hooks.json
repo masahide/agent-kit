@@ -1,0 +1,6 @@
+{
+  "description": "agentctl Mod: session.start で mod.json を書き、500 ms ごとに受信箱を読み、prompt は $.prompt.submit、interrupt は $.turn.abort で行って ack を書く。turn.start / turn.complete で main の turn の実行中を覚える",
+  "modules": [
+    "./register.ts"
+  ]
+}

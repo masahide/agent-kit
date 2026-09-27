@@ -1,0 +1,8 @@
+{
+  "name": "agentctl",
+  "version": "0.1.0",
+  "description": "agentctl Mod: agentctl CLI (tools/agentctl) が ~/.agentctl/claude/<sessionId>/inbox/ に置いたメッセージを $.prompt.submit で Claude に届け、中断の依頼を $.turn.abort で行い、結果を acks/ に書く。付属スキル agentctl は、agent に agentctl の使い方を教える。",
+  "author": {
+    "name": "agent-kit"
+  }
+}
