@@ -16,7 +16,7 @@
   acks/<id>.json      Mod が書く ({ v, id, status, detail?, at })
 ```
 
-- `session.start`: `mod.json` を書きます。`pid` は `sh -c 'echo $PPID'` で取った claude の pid で、CLI はこれをセッション記録の pid と照合して、前のプロセスが残した `mod.json` を使いません。`AGENTCTL_HOME` があれば `~/.agentctl` の代わりに使います。
+- `session.start`: `mod.json` を書きます。`pid` は `sh -c 'echo $PPID'` で取った claude の pid で、CLI はこれをセッション記録の pid と照合して、前のプロセスが残した `mod.json` を使いません。`sh` が無い Windows では `pid` を 0 にし、CLI は `startedAt` がプロセスの起動より後かどうかで照合します。ホームは `USERPROFILE`、無ければ `HOME` です。`AGENTCTL_HOME` があれば `~/.agentctl` の代わりに使います。
 - 500 ms ごとに `inbox/` を `$.fs.list` し、まだ ack の無いメッセージを古い順に処理します。
   - `prompt`: turn の実行中なら先に `queued` の ack を書き、`$.prompt.submit` が返ったら (次の turn が始まったら) `submitted` に書き換えます。`{ drop }` なら `dropped`、throw したら `error` です。
   - `interrupt`: main の turn の実行中なら `$.turn.abort` で止めて `aborted`、そうでなければ `no_turn` です。
@@ -38,7 +38,7 @@ npx -y -p typescript tsc -p plugins/agentctl --noEmit   # 先に /plugin-types �
 ```
 > ./register.ts hooks: turn.start, turn.complete, session.start
 > ./register.ts calls: $.clock.every, $.clock.now, $.env.get, $.fs.exists, $.fs.list, $.fs.read, $.fs.write, $.process.run, $.prompt.submit, $.session.id, $.turn.abort, $.ui.log
-> ./register.ts env reads: AGENTCTL_HOME, HOME
+> ./register.ts env reads: AGENTCTL_HOME, HOME, USERPROFILE
 ```
 
 ## ファイル

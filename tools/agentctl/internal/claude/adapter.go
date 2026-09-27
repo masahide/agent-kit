@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/masahide/agent-kit/tools/agentctl/internal/session"
@@ -20,11 +19,13 @@ type Adapter struct {
 	SessionsDir string // ~/.claude/sessions
 	ProjectsDir string // ~/.claude/projects
 	store       store
-	// Kill and Alive are replaced in tests.
-	Kill  func(pid int, sig syscall.Signal) error
-	Alive func(pid int, procStart string) bool
-	Now   func() time.Time
-	Sleep func(context.Context, time.Duration) error
+	// Terminate and Alive are replaced in tests. CanTerminate is false on
+	// Windows, where Stop only interrupts the turn.
+	Terminate    func(pid int) error
+	CanTerminate bool
+	Alive        func(pid int, procStart string) bool
+	Now          func() time.Time
+	Sleep        func(context.Context, time.Duration) error
 	// AckTimeout is how long send waits for the Mod.
 	AckTimeout time.Duration
 }
@@ -42,12 +43,13 @@ func New(home string) *Adapter {
 		base = filepath.Join(home, ".agentctl")
 	}
 	return &Adapter{
-		SessionsDir: filepath.Join(claudeDir, "sessions"),
-		ProjectsDir: filepath.Join(claudeDir, "projects"),
-		store:       store{base: filepath.Join(base, "claude")},
-		Kill:        syscall.Kill,
-		Alive:       processAlive,
-		Now:         time.Now,
+		SessionsDir:  filepath.Join(claudeDir, "sessions"),
+		ProjectsDir:  filepath.Join(claudeDir, "projects"),
+		store:        store{base: filepath.Join(base, "claude")},
+		Terminate:    terminate,
+		CanTerminate: canTerminate,
+		Alive:        processAlive,
+		Now:          time.Now,
 		Sleep: func(ctx context.Context, d time.Duration) error {
 			select {
 			case <-ctx.Done():
@@ -87,9 +89,24 @@ func (a *Adapter) live() map[string]Record {
 	return out
 }
 
+// modOK reports whether the Mod in the running process wrote mod.json. The
+// Mod gets its pid from `sh`; where there is no sh (Windows) it writes pid 0,
+// and a mod.json written after the process started counts instead.
 func (a *Adapter) modOK(r Record) bool {
 	m, ok := a.store.mod(r.SessionID)
-	return ok && m.PID == r.PID
+	if !ok {
+		return false
+	}
+	if m.PID != 0 {
+		return m.PID == r.PID
+	}
+	return r.StartedAt > 0 && m.StartedAt >= r.StartedAt
+}
+
+// terminable reports whether Stop may end the process of r.
+func (a *Adapter) terminable(r Record) bool {
+	s := surfaceOf(r)
+	return a.CanTerminate && (s == "terminal" || s == "tmux")
 }
 
 func (a *Adapter) fromRecord(r Record) session.Session {
@@ -112,7 +129,7 @@ func (a *Adapter) fromRecord(r Record) session.Session {
 		CreatedAt: msTime(r.StartedAt), UpdatedAt: msTime(updated),
 		Capabilities: session.Capabilities{
 			Send: mod, Interrupt: mod,
-			Stop: mod || surface == "terminal" || surface == "tmux",
+			Stop: mod || a.terminable(r),
 		},
 		Surface: session.Ptr(surface),
 		Process: session.Process{PID: session.Ptr(r.PID)},
@@ -508,16 +525,19 @@ func (a *Adapter) Stop(ctx context.Context, id string, turnOnly bool) (session.S
 	if turnOnly {
 		return res, nil
 	}
-	switch surfaceOf(r) {
-	case "terminal", "tmux":
-	default:
-		res.Hint = "this session runs in Claude Desktop or VS Code; ask the user to close it there"
+	if !a.terminable(r) {
+		switch surfaceOf(r) {
+		case "desktop", "vscode":
+			res.Hint = "this session runs in Claude Desktop or VS Code; ask the user to close it there"
+		default:
+			res.Hint = "agentctl does not end Claude processes on Windows; ask the user to exit Claude Code (Ctrl+D twice)"
+		}
 		return res, nil
 	}
 	if !a.Alive(r.PID, r.ProcStart) {
 		return res, nil
 	}
-	if err := a.Kill(r.PID, syscall.SIGTERM); err != nil {
+	if err := a.Terminate(r.PID); err != nil {
 		return res, session.Errf(session.CodeProviderError, "cannot stop process %d: %v", r.PID, err)
 	}
 	deadline := a.Now().Add(5 * time.Second)

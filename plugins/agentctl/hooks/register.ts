@@ -36,7 +36,8 @@ export function register(on: On) {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
 
-    const home = await $.env.get('HOME')
+    // Windows では HOME が無いことがあるので USERPROFILE を先に見る (Go の os.UserHomeDir と同じ場所になる)
+    const home = (await $.env.get('USERPROFILE')) || (await $.env.get('HOME'))
     const sessionId = await $.session.id()
     if (!home || !sessionId) {
       $.ui.log('agentctl: HOME かセッション id が分からないので、受信箱を開けません')
@@ -49,7 +50,8 @@ export function register(on: On) {
       $.clock.now().then(now => $.fs.write(`${dir}/acks/${id}.json`, JSON.stringify(makeAck(id, status, now, detail))))
 
     // `sh` の親が claude のプロセスです。CLI はこの pid をセッション記録の pid と照合し、
-    // 前のプロセスが残した mod.json を使わないようにします。
+    // 前のプロセスが残した mod.json を使わないようにします。sh が無い (Windows) ときは 0 を書き、
+    // CLI は startedAt がプロセスの起動より後かどうかで照合します。
     let pid = 0
     try {
       const out = await $.process.run(['sh', '-c', 'echo $PPID'])

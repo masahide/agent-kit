@@ -53,7 +53,8 @@ func (a *Adapter) Provider() session.Provider { return session.Codex }
 
 func (a *Adapter) conn(ctx context.Context) (*client, error) {
 	c, err := connect(ctx, a.Socket)
-	if err != nil && a.StartDaemon != nil && isNoSocket(err) {
+	// Any dial error may mean the daemon is not running (the message differs by OS).
+	if err != nil && a.StartDaemon != nil {
 		if serr := a.StartDaemon(ctx); serr == nil {
 			c, err = connect(ctx, a.Socket)
 		}

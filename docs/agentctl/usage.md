@@ -22,8 +22,19 @@ agentctl --json doctor
 Claude のセッションに `send` するには、そのセッションに agentctl Mod が載っている必要があります。一覧、会話の読み取り、terminal のセッションの停止は、Mod が無くてもできます。
 
 1. Claude Code を起動する環境に `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` を足します (シェルの設定か `~/.claude/settings.json` の `env`)。
-2. plugin を読み込みます。試すだけなら `claude --plugin-dir <このリポジトリ>/plugins/agentctl`、ふだん使うなら marketplace から入れて有効にします。
+2. plugin を読み込みます。試すだけなら `claude --plugin-dir <このリポジトリ>/plugins/agentctl`、`~/.claude/settings.json` の `env` の `CLAUDE_CODE_PLUGIN_DIRS` に足せば、terminal でも Claude Desktop でも毎回読み込まれます。複数のフォルダは OS のパス区切り (Windows は `;`、macOS と Linux は `:`) で並べます。
 3. セッションを起動し直して、`agentctl --json doctor` の `modSessions` が増えることを確かめます。
+
+Windows の `~/.claude/settings.json` (`C:\Users\<you>\.claude\settings.json`) の例 (doc-desk と一緒に読み込む):
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1",
+    "CLAUDE_CODE_PLUGIN_DIRS": "C:\\Users\\<you>\\git\\agent-kit\\plugins\\doc-desk;C:\\Users\\<you>\\git\\agent-kit\\plugins\\agentctl"
+  }
+}
+```
 
 Claude Desktop のセッションで Mod が動くかは未確認です (plan.md 7 章 C4)。動かない場合も、Desktop のセッションの一覧と会話の読み取りはできます。
 
@@ -74,6 +85,12 @@ agentctl sessions create claude ~/src/api --wait 600
 | Codex | 実行中の turn を止める | 同じ。thread は daemon に残る |
 
 Claude の `archive` と `delete` は、セッションが動いていれば先に止めます。Desktop と VS Code のものは止められないので、人に閉じてもらうよう `user_action_required` を返します。`delete` は transcript (`~/.claude/projects/*/<id>.jsonl`) を消します。
+
+### 2.4 Windows での違い
+
+- `stop` は Claude のプロセスを終わらせません (SIGTERM が無く、TerminateProcess では Claude Code が保存できないため)。turn だけを止め、`hint` で人に閉じてもらうよう伝えます。`archive` と `delete` も、動いているセッションには `user_action_required` を返します。
+- 生存判定は pid だけで行います (Linux のような起動時刻の照合をしません)。
+- Codex の daemon への接続 (Unix socket) は Windows では未確認です。
 
 ## 3. 終了コード
 

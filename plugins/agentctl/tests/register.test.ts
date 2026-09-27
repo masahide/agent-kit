@@ -13,7 +13,7 @@ const DIR = `${HOME}/.agentctl/claude/${SESSION_ID}`
  * Mod の下の世界: ファイルは Map、時計は mock.clock、$.prompt.submit は gate が開くまで返らない
  * (turn の実行中に投入すると、その turn が終わるまで返らないのを模す)。
  */
-function world(on: On) {
+function world(on: On, options: { windows?: boolean } = {}) {
   const files = new Map<string, string>()
   const submitted: Args<'prompt.submit'>[] = []
   const aborted: string[] = []
@@ -23,8 +23,12 @@ function world(on: On) {
 
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: SESSION_ID }))
-  on('env.get', ($, e) => ({ value: e.name === 'HOME' ? HOME : undefined }))
-  on('process.run', () => ({ value: { exitCode: 0, stdout: '4242\n', stderr: '' } }))
+  on('env.get', ($, e) => ({ value: e.name === (options.windows ? 'USERPROFILE' : 'HOME') ? HOME : undefined }))
+  on('process.run', () =>
+    options.windows
+      ? { value: { exitCode: 1, stdout: '', stderr: "'sh' is not recognized" } }
+      : { value: { exitCode: 0, stdout: '4242\n', stderr: '' } },
+  )
   on('fs.write', ($, e) => {
     files.set(e.path, e.text)
     return { value: undefined }
@@ -92,6 +96,15 @@ describe('register', () => {
       modVersion: '0.1.0',
       startedAt: Date.UTC(2026, 8, 27, 12, 0, 0),
     })
+  })
+
+  test('sh が無い Windows では USERPROFILE の下に pid 0 の mod.json を書く', async ($, on) => {
+    const w = world(on, { windows: true })
+    await $.session.start(START)
+
+    const mod = JSON.parse(w.files.get(`${DIR}/mod.json`) ?? '{}')
+    expect(mod.pid).toBe(0)
+    expect(mod.sessionId).toBe(SESSION_ID)
   })
 
   test('idle のときの prompt は $.prompt.submit で届け、submitted の ack を書く', async ($, on) => {
