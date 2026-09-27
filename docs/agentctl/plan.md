@@ -494,7 +494,7 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 ```
 
 - CLI は Go 1.24 以降で書き、`go build` で単一のバイナリにします。引数の解析は標準ライブラリで自前に書き、cobra などの外部パッケージは使いません (YAGNI)。標準の `flag` は最初の位置引数で解析をやめ、`sessions send <id> --text ...` の形を読めないため使いません。
-- 配るのは `go install github.com/masahide/agent-kit/tools/agentctl@latest` だけにします。リリース用のバイナリの配布は、必要になってから考えます。
+- 配り方: タグ `agentctl-v*` で GitHub Actions がバイナリを作って Releases に添付し、`tools/agentctl/install.sh` (`curl ... | sh`) と `install.ps1` (`irm ... | iex`) がそれを取ります (2026-09-27 に追加。usage.md 1.1)。
 - 共有ディレクトリのファイル形式は、Mod の `hooks/protocol.ts` と CLI の `internal/claude/protocol.go` に 2 回書くことになります。ずれを防ぐため、見本の JSON を Mod 側の `plugins/agentctl/tests/fixtures/protocol/` に置き、Go のテスト (リポジトリの相対パスで読む) が自分の型で読み書きできることを確かめます。Mod のテストは JSON を import できない (`claude plugin test` がコードの拡張子のファイルしか読まない) ので、同じ中身を 1 行ずつ `tests/fixtures/protocol.ts` に置き、Mod のテストはそれを使います。JSON と TS 版のずれは Go の `TestProtocolFixtures` が見つけます。形を変えるときは見本から直します。
 - 共有ディレクトリのファイル形式に `v: 1` を持たせ、読み手は知らない `v` を読まずにエラーにします。
 

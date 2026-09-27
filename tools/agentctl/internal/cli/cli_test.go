@@ -274,3 +274,14 @@ func TestCreateWaitsForTheUser(t *testing.T) {
 		t.Fatalf("with --wait: %d %s %s %v", r.code, r.stdout, r.stderr, cl.sent)
 	}
 }
+
+func TestVersion(t *testing.T) {
+	r := run(t, nil, "", "--version")
+	if r.code != 0 || r.stdout != "agentctl dev\n" {
+		t.Fatalf("%d %q", r.code, r.stdout)
+	}
+	r = run(t, nil, "", "--json", "--version")
+	if r.code != 0 || !strings.Contains(r.stdout, `"version": "dev"`) {
+		t.Fatalf("%d %q", r.code, r.stdout)
+	}
+}
