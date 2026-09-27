@@ -1,12 +1,13 @@
 # agentctl 実装計画書 (MVP)
 
-作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
+作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
 
 ## 要点
 
 - 稼働中の Claude Code と Codex のセッションを、1 つの CLI `agentctl` から一覧、確認、起動、送信、待機、停止、アーカイブ、削除できるようにします。
 - 主な利用者は人ではなく agent (Claude Code や Codex 自身) です。コマンドは「名詞 + 動詞」(`agentctl sessions list`) にそろえ、全コマンドで `--json` を出し、`doctor` と `resolve` と `raw` を持たせ、使い方を教える短いスキルを添えます (3 章)。
-- Claude の一覧と状態は、Claude Code 本体が稼働中のセッションごとに書く `~/.claude/sessions/<pid>.json` から読みます。Mod (`plugins/agentctl`) の仕事は、CLI が置いた受信箱のメッセージを `$.prompt.submit` で投入することと、実行中の turn を `$.turn.abort` で止めることだけです。Channels は使いません。起動、resume、終了は CLI が tmux とシグナルで受け持ちます。
+- Claude の一覧と状態は、Claude Code 本体が稼働中のセッションごとに書く `~/.claude/sessions/<pid>.json` から読みます。Mod (`plugins/agentctl`) の仕事は、CLI が置いた受信箱のメッセージを `$.prompt.submit` で投入することと、実行中の turn を `$.turn.abort` で止めることだけです。Channels は使いません。
+- Claude のプロセスは agentctl が起動しません。人が terminal、Claude Desktop、VS Code で起動したセッションをそのまま使います。対象のセッションが動いていなければ、どこで何を起動すればよいかを返し、人に起動してもらいます (2.3)。
 - Codex は、Codex の共有 app-server daemon に `codex app-server proxy` 経由でつなぎ、JSON-RPC (`thread/*`, `turn/*`) を呼びます。Codex の TUI も既定でこの daemon を使うので、人が起動した TUI のセッションも操作できます。
 - 両者の差は `Adapter` という 1 つの interface で吸収します。
 - CLI は依存ゼロの TypeScript を Node 22 の型除去で直接動かします (ビルド無し)。常駐の agentctl daemon は作りません。
@@ -19,7 +20,8 @@
 | セッション | Claude では session (`sessionId`)、Codex では thread (`threadId`) です。agentctl では両方を「セッション」と呼び、ID は元の ID をそのまま使います |
 | adapter | provider ごとの差を吸収する実装です。`src/adapters/claude.ts` と `src/adapters/codex.ts` の 2 つです |
 | セッション記録 | Claude Code 本体が稼働中のセッションごとに書く `~/.claude/sessions/<pid>.json` です。公開された形式ではありません |
-| 共有ディレクトリ | `${AGENTCTL_HOME:-~/.agentctl}`。Claude の Mod と CLI がファイルでやり取りする場所と、agentctl が起動したセッションの記録を置きます |
+| 共有ディレクトリ | `${AGENTCTL_HOME:-~/.agentctl}`。Claude の Mod と CLI がファイルでやり取りする場所と、agentctl が付けた名前やアーカイブの印を置きます |
+| 起動元 (surface) | Claude のセッションがどこで動いているか。`desktop` (Claude Desktop)、`vscode`、`tmux`、`terminal` の 4 つで、本体がセッション記録の `entrypoint` と `tmux` から決めるのと同じ分け方です |
 | 受信箱 (inbox) | CLI が Claude のセッションに届けたいメッセージを 1 件 1 ファイルで置くディレクトリです |
 | ack | Mod が受信箱のメッセージを処理した結果を書くファイルです。CLI はこれを見て送信の成否を知ります |
 | daemon (Codex) | `codex app-server daemon start` で動く共有の app-server です。control socket で待ち受けます |
@@ -39,8 +41,9 @@
 | CLI からのメッセージを受ける | Mod の `$.clock.every` + `$.fs.list` + `$.fs.read` | 可の見込み。共有ディレクトリ (cwd の外) を読めるかは未確認 → C2 |
 | Claude に投入する | Mod の `$.prompt.submit({ text })` | 可 (doc-desk の V5, V7)。`{ drop }` で断られることがある。busy 中の振る舞いは未確認 → C3 |
 | 実行中の turn を止める | Mod の `$.turn.abort({ turnId })` (`turn.start` の `turnId`) | 可 (live-view で設計済み) |
-| プロセスを終わらせる | Mod からは不可 (終了 API が無い) | CLI がセッション記録の `pid` にシグナルを送るか、tmux のセッションを閉じる |
-| 新規起動 / resume | `claude --session-id <uuid>` / `claude --resume <id>` | 可 (CLI のフラグを確認済み)。TTY が要るので tmux の中で起動する |
+| 起動元を知る | セッション記録の `entrypoint` (`claude-desktop` / `claude-desktop-3p` / `local-agent` は Desktop、`claude-vscode` は VS Code) と `tmux` | 可。本体も同じ規則で `desktop` / `vscode` / `tmux` / `terminal` に分けている (バイナリで確認) |
+| プロセスを終わらせる | Mod からは不可 (終了 API が無い) | terminal と tmux のセッションだけ、CLI がセッション記録の `pid` に SIGTERM を送る。Desktop と VS Code のセッションは、それぞれのアプリが子プロセスを管理しているので送らない |
+| 新規起動 / resume | agentctl からは行わない | 人に起動してもらう (2.3)。Claude Desktop を外から開く `claude://` / `claude-cli://` のリンクは本体にあるが、形式が公開されていないので MVP では使わない (9 章) |
 | 会話の中身を読む | transcript の jsonl | 可 |
 | アーカイブ / 削除 | Claude Code に API は無い | agentctl 側で模す (アーカイブは印を付けて一覧から隠す、削除は transcript の jsonl を消す) |
 
@@ -78,8 +81,9 @@ flowchart LR
       CA -- "一覧・状態を読む" --> S[(~/.claude/sessions/&lt;pid&gt;.json)]
       CA -- "会話を読む" --> J[(~/.claude/projects/*/&lt;id&gt;.jsonl)]
       CA -- "inbox/*.json を置く、ack を読む" --> D[(~/.agentctl/claude/&lt;id&gt;/)]
-      CA -- "new / resume / stop" --> T[tmux / シグナル]
-      T --> CC[claude プロセス]
+      CA -- "stop (terminal のみ)" --> SIG[SIGTERM]
+      SIG --> CC
+      H[人] -- "起動 / resume" --> CC[claude プロセス<br>terminal / Desktop / VS Code]
       CC -- 書く --> S
       M[agentctl Mod] -- "inbox を読む、ack を書く" --> D
       CC --- M
@@ -94,7 +98,7 @@ flowchart LR
 
 - CLI は 1 コマンドごとに起動して終わる短命のプロセスです。常駐するのは Claude のプロセスと Codex の daemon だけで、どちらも既存のものです。
 - Claude の一覧は本体のセッション記録から作るので、Mod を入れていないセッションも `sessions list` に出ます。`send` と `stop --turn` だけは Mod が要ります。Mod が載っているかは、Mod が起動時に書く `mod.json` で判断し、`capabilities.send` として出します。
-- `sessions create` / `sessions resume` で起動したセッションは tmux の中で動くので、`tmux attach -t agentctl-<id8>` で人が画面を見られます (権限の確認や信頼ダイアログに答えるときに使う)。
+- Claude のプロセスは人が起動します。agentctl は起動済みのプロセスを見つけて使い、見つからなければ人に起動を頼みます (2.3)。権限の確認や信頼ダイアログには、人がふだん使っている画面 (Desktop や terminal) でそのまま答えます。
 
 ### 2.1 Claude: 共有ディレクトリのファイル形式
 
@@ -102,7 +106,7 @@ flowchart LR
 ~/.agentctl/
   claude/<sessionId>/
     mod.json            Mod だけが書く (起動時に 1 回)
-    launch.json         CLI だけが書く (agentctl が起動したとき、アーカイブしたとき)
+    meta.json           CLI だけが書く (名前を付けたとき、アーカイブしたとき)
     inbox/<msgId>.json  CLI が書く (一時名で書いて rename)
     acks/<msgId>.json   Mod が書く
 ```
@@ -110,7 +114,7 @@ flowchart LR
 書き手をファイルごとに 1 人に決め、ロックを持ちません。
 
 - `mod.json`: `{ v: 1, sessionId, pid, modVersion, startedAt }`。`/clear` で `sessionId` が変わったら、新しい ID のディレクトリにも書きます。
-- `launch.json`: `{ v: 1, tmux: "agentctl-<id8>", name, dir, launchedAt, archived: false }`。
+- `meta.json`: `{ v: 1, name, archived: false, updatedAt }`。
 - `inbox/<msgId>.json`: `{ v: 1, id, kind: "prompt"|"interrupt", text?, createdAt }`。`msgId` は時刻順に並ぶ ID (`<epochms>-<rand>`) です。
 - `acks/<msgId>.json`: `{ v: 1, id, status: "submitted"|"dropped"|"aborted"|"error", detail?, at }`。
 
@@ -135,7 +139,8 @@ type Session = {
   createdAt: string; updatedAt: string          // ISO 8601
   capabilities: { send: boolean; interrupt: boolean; stop: boolean }
   waitingFor: string | null                    // 権限の確認待ちなど
-  process: { pid: number | null; tmux: string | null }
+  surface: 'desktop' | 'vscode' | 'tmux' | 'terminal' | 'codex-daemon' | null  // 止まっていれば null
+  process: { pid: number | null }
 }
 
 type Message = { id: string; role: 'user' | 'assistant' | 'tool'; text: string; at: string }
@@ -145,8 +150,9 @@ interface Adapter {
   list(q: { all: boolean; cwd?: string; limit: number; cursor?: string }): Promise<{ items: Session[]; nextCursor: string | null }>
   get(id: string): Promise<Session & { raw: unknown }>
   messages(id: string, q: { last: number }): Promise<Message[]>
-  create(dir: string, o: { prompt?: string; name?: string; args: string[] }): Promise<Session>
-  resume(id: string): Promise<Session>
+  // Claude は起動せず、人への依頼 (StartRequest) を返す。Codex は Session を返す
+  create(dir: string, o: { prompt?: string; name?: string; args: string[] }): Promise<Session | StartRequest>
+  resume(id: string): Promise<Session | StartRequest>
   send(id: string, text: string): Promise<{ delivery: 'turn_started' | 'steered' | 'submitted' | 'queued' }>
   stop(id: string, o: { turnOnly: boolean }): Promise<void>
   archive(id: string): Promise<void>
@@ -154,6 +160,8 @@ interface Adapter {
   raw(method: string, params: unknown): Promise<unknown>
 }
 ```
+
+`StartRequest` は `{ provider, dir, sessionId?, instructions: { desktop, terminal, vscode }, detect: { cwd, sessionId?, after } }` で、人に見せる手順と、起動を見つけるための条件です (2.3)。
 
 `wait` は adapter に持たせず、CLI 本体が `get` を 1 秒ごとに呼んで状態を見ます (provider ごとの実装が要らない)。
 
@@ -165,8 +173,47 @@ interface Adapter {
 | `waiting` | `waitingFor` がある (値の種類は C1) | `active` + `waitingOnApproval` / `waitingOnUserInput` |
 | `idle` | `status: idle` | `idle` |
 | `stopped` | 記録が無い、または `pid` が死んでいる / 別のプロセスになっている。transcript だけある | `notLoaded` |
-| `archived` | `launch.json` の `archived: true` | `thread/list { archived: true }` に出るもの |
+| `archived` | `meta.json` の `archived: true` | `thread/list { archived: true }` に出るもの |
 | `error` | — | `systemError` |
+
+### 2.3 Claude のプロセスは人が起動する
+
+agentctl は Claude のプロセスを起動しません。tmux も使いません。人が terminal、Claude Desktop、VS Code で起動したセッションは、どれも本体のセッション記録に載るので、agentctl はそれを見つけて使います。
+
+起動済みのプロセスを探す順:
+
+1. `<id>` を指定されたら、その `sessionId` のセッション記録を探し、`pid` が生きていれば使います。
+2. `sessions create claude <dir>` では、`cwd` が `<dir>` の稼働中のセッションを探します。あれば新しく起動せずにそれを返し、`reused: true` を付けます (`--new` を付けたときは探さない)。
+3. 見つからなければ、人への依頼を返します。
+
+人への依頼の中身 (`--json` では `error.code: "user_action_required"`、終了コード 5):
+
+```json
+{ "error": { "code": "user_action_required",
+    "message": "No running Claude session in /home/u/src/api. Ask the user to start one.",
+    "action": { "kind": "start_claude", "dir": "/home/u/src/api", "sessionId": null,
+      "instructions": {
+        "desktop":  "Claude Desktop > Code > New session > choose folder /home/u/src/api",
+        "terminal": "cd /home/u/src/api && claude",
+        "vscode":   "Open /home/u/src/api in VS Code and start Claude Code" } },
+    "next": ["agentctl --json sessions create claude /home/u/src/api --wait 600"] } }
+```
+
+- `resume` では `terminal` の手順が `claude --resume <id>`、Desktop の手順が「Code の履歴から <title> を開く」になります。
+- `--json` が無いときは、同じ内容を人が読める文で stderr に出します。
+- `--wait SEC` を付けると、依頼を stderr に出したまま、条件に合うセッション記録が現れるまで待ちます (`cwd` が一致し、`startedAt` が依頼より後。`resume` は `sessionId` が一致)。現れたら普通の成功として返し、時間切れなら `user_action_required` を返します。agent は依頼を人に伝えてから `--wait` 付きで打ち直せばよく、人が起動した時点で続きに進めます。
+- 見つかったセッションに Mod が載っていない (`mod.json` が無い) ときは、`send` が `unsupported` になり、`hint` に「Mod を有効にしてセッションを開き直す」手順を出します。
+
+`--prompt` の扱い: 見つけた (または人が起動した) セッションに、続けて `send` と同じ経路で送ります。
+
+`stop` の扱い:
+
+| 起動元 | `stop --turn` | `stop` |
+|---|---|---|
+| `terminal` / `tmux` | Mod で turn を止める | turn を止めてから `pid` に SIGTERM (`procStart` が合うときだけ) |
+| `desktop` / `vscode` | Mod で turn を止める | turn だけ止め、プロセスは残す。`hint` に「アプリでセッションを閉じる」と出す (`stopped: false` を返す) |
+
+Desktop と VS Code の子プロセスをシグナルで殺すと、アプリ側が異常終了として扱うおそれがあるためです。
 
 ## 3. CLI 仕様 (agent 向け)
 
@@ -196,8 +243,8 @@ Wait
   agentctl sessions wait <id> [--until idle|stopped|waiting] [--timeout SEC]
 
 Write (実際に効きます)
-  agentctl sessions create <provider> <directory> [--prompt TEXT | --prompt-file F] [--name NAME] [-- <provider の引数>]
-  agentctl sessions resume <id>
+  agentctl sessions create <provider> <directory> [--prompt TEXT | --prompt-file F] [--name NAME] [--new] [--wait SEC] [-- <codex の引数>]
+  agentctl sessions resume <id> [--wait SEC]
   agentctl sessions send <id> (--text TEXT | --text-file F | --text-file -)
   agentctl sessions stop <id> [--turn]
   agentctl sessions archive <id>
@@ -290,17 +337,17 @@ Exit codes: 0 ok, 2 bad arguments, 3 not found/ambiguous, 4 unsupported (no Mod)
 
 | コマンド | Claude | Codex |
 |---|---|---|
-| `doctor` | `claude --version`、`tmux -V`、`~/.claude/sessions/` が読めるか、Mod が有効か (稼働中のセッションの `mod.json` の有無) | `codex --version`、daemon につながるか (`initialize` が返るか) |
-| `sessions list` | セッション記録 (稼働中)。`--all` で transcript と `launch.json` から止まっているものも | `thread/loaded/list`。`--all` で `thread/list` (`cursor` をそのまま `nextCursor` に) |
-| `sessions get` | セッション記録、`mod.json`、`launch.json`、transcript のパス | `thread/read` |
+| `doctor` | `claude --version`、`~/.claude/sessions/` が読めるか、Mod が有効か (稼働中のセッションの `mod.json` の有無) | `codex --version`、daemon につながるか (`initialize` が返るか) |
+| `sessions list` | セッション記録 (稼働中)。`--all` で transcript と `meta.json` から止まっているものも | `thread/loaded/list`。`--all` で `thread/list` (`cursor` をそのまま `nextCursor` に) |
+| `sessions get` | セッション記録、`mod.json`、`meta.json`、transcript のパス | `thread/read` |
 | `sessions messages` | transcript の jsonl の末尾から user / assistant の行を N 件 | `thread/turns/list` か `thread/items/list` の末尾 N 件 |
 | `sessions wait` | `get` の繰り返し | `get` の繰り返し |
-| `sessions create` | UUID を作り、`tmux new-session -d -s agentctl-<id8> -c <dir> claude --session-id <uuid> [--name] [args] [prompt]`。セッション記録が現れるまで最大 30 秒待つ | `daemon start` → `thread/start { cwd }` → `--prompt` があれば `turn/start` |
-| `sessions resume` | tmux で `claude --resume <id>` | `thread/resume` |
+| `sessions create` | `<dir>` の稼働中のセッションを返す。無ければ人への依頼 (2.3)。`--wait` で現れるまで待つ | `daemon start` → `thread/start { cwd }` → `--prompt` があれば `turn/start` |
+| `sessions resume` | 動いていればそのまま返す。止まっていれば人への依頼 (2.3) | `thread/resume` |
 | `sessions send` | `inbox/` に置き、`acks/` を最大 10 秒待つ | idle なら `turn/start`、active なら `turn/steer` |
-| `sessions stop` | busy なら `interrupt` を送る → tmux のセッションを閉じる。無ければ `pid` に SIGTERM (`procStart` が合うときだけ) | `turn/interrupt` → `thread/unsubscribe` |
+| `sessions stop` | 2.3 の表のとおり (terminal / tmux だけ SIGTERM) | `turn/interrupt` → `thread/unsubscribe` |
 | `sessions stop --turn` | `interrupt` を送るだけ | `turn/interrupt` だけ |
-| `sessions archive` | 止めてから `launch.json` に `archived: true` | `thread/archive` |
+| `sessions archive` | 止めてから `meta.json` に `archived: true` | `thread/archive` |
 | `sessions delete` | 止めてから共有ディレクトリと transcript の jsonl を消す | `thread/delete` |
 
 `send` の意味の揃え方: Codex は active 中の送信を `turn/steer` にします。Claude は `$.prompt.submit` に任せ、実際にどうなったかを `delivery` (`submitted` / `queued`) で返します。busy 中の振る舞いは C3 で確かめます。
@@ -315,7 +362,7 @@ Exit codes: 0 ok, 2 bad arguments, 3 not found/ambiguous, 4 unsupported (no Mod)
                "cwd": "/home/u/src/agent-kit", "title": "agent-kit-1f",
                "createdAt": "...", "updatedAt": "...", "waitingFor": null,
                "capabilities": { "send": true, "interrupt": true, "stop": true },
-               "process": { "pid": 103, "tmux": null } } ],
+               "surface": "desktop", "process": { "pid": 103 } } ],
   "nextCursor": null }
 
 // sessions create / send / stop など、書き込みの結果には次に打つコマンドを添える
@@ -332,7 +379,7 @@ Exit codes: 0 ok, 2 bad arguments, 3 not found/ambiguous, 4 unsupported (no Mod)
              "hint": "use a longer prefix or --provider" } }
 ```
 
-`error.code` の一覧: `invalid_argument` (3.2 のとおり `usage` と `suggestions` を付ける), `not_found`, `ambiguous_id`, `confirmation_required`, `unsupported` (例: Mod の無いセッションへの `send`), `provider_unavailable` (tmux / codex / daemon が無い), `timeout` (`wait` と `send` の ack), `provider_error` (Codex の JSON-RPC エラーをそのまま `detail` に)。
+`error.code` の一覧: `invalid_argument` (3.2 のとおり `usage` と `suggestions` を付ける), `not_found`, `ambiguous_id`, `confirmation_required`, `unsupported` (例: Mod の無いセッションへの `send`), `provider_unavailable` (claude / codex / daemon が無い), `user_action_required` (人に Claude を起動してもらう必要がある。`action` と `next` を付ける。2.3), `timeout` (`wait` と `send` の ack), `provider_error` (Codex の JSON-RPC エラーをそのまま `detail` に)。
 
 `--json` が無いときは人向けの表と文を stdout に出し、エラーは stderr に 1 行で出します。
 
@@ -347,6 +394,7 @@ JSON には、transcript の本文や token などの余計な中身は入れま
 | 2 | 引数の誤り (`invalid_argument`, `confirmation_required`) |
 | 3 | セッションが見つからない / 曖昧 (`not_found`, `ambiguous_id`) |
 | 4 | provider が使えない / その操作に対応していない (`provider_unavailable`, `unsupported`) |
+| 5 | 人の操作が要る (`user_action_required`)。agent は `action` を人に伝えてから `next` を打つ |
 
 `doctor --json` は、何も入っていない環境でも終了コード 0 で、足りないものを項目ごとに返します。
 
@@ -359,7 +407,7 @@ JSON には、transcript の本文や token などの余計な中身は入れま
 ### 3.8 raw
 
 - `raw codex <method>` は、agentctl がつないだ daemon に JSON-RPC をそのまま投げ、結果をそのまま返します。`thread/delete` などの書き込みも通るので、`--help` に「実際に効きます」と書きます。
-- `raw claude record <id>` は、セッション記録と `mod.json` と `launch.json` をまとめて返します。読み取りだけです。
+- `raw claude record <id>` は、セッション記録と `mod.json` と `meta.json` をまとめて返します。読み取りだけです。
 
 ### 3.9 付属スキル
 
@@ -387,6 +435,8 @@ Rules:
 - Use --json when reading output. Use the full id from the output.
 - Do not stop, archive or delete sessions the user did not ask about.
 - delete needs --yes; ask the user first.
+- If you get user_action_required, show error.action.instructions to the user,
+  then run the command in error.next (it waits until the session appears).
 - Use raw only when a sessions command is missing.
 ```
 
@@ -415,7 +465,7 @@ tools/agentctl/                   CLI
   src/adapters/codex.ts
   src/claude/records.ts           ~/.claude/sessions と transcript の読み取り、生存判定
   src/claude/inbox.ts             共有ディレクトリの読み書き (atomic write、掃除)
-  src/claude/tmux.ts              tmux の起動と終了
+  src/claude/start-request.ts     人への依頼 (手順の文と、起動を見つける条件) と --wait
   src/codex/rpc.ts                `codex app-server proxy` 越しの JSON-RPC クライアント
   test/*.test.ts                  node --test
 docs/agentctl/plan.md             この文書
@@ -452,8 +502,8 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 4: Claude の lifecycle
 
-- `tmux.ts` と `sessions create` / `resume` / `stop` / `archive` / `delete`。
-- `create` はセッション記録が 30 秒で現れなければ `provider_unavailable` で返し、`hint` に「起動時のダイアログで止まっている可能性があります。`tmux attach -t agentctl-<id8>` で確かめてください」と書きます。
+- `start-request.ts` と `sessions create` / `resume` (起動済みの再利用、人への依頼、`--wait`)、`stop` (起動元ごとの扱い)、`archive` / `delete`。
+- Desktop と terminal の両方で、人が起動したセッションを `--wait` が拾うことを実機で確かめます。
 
 ### 段階 5: Codex adapter
 
@@ -463,14 +513,14 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 6: 仕上げ
 
-- `docs/agentctl/usage.md` (Mod の入れ方、tmux の要件、困ったとき)。
+- `docs/agentctl/usage.md` (Mod の入れ方、Desktop と terminal での使い方、困ったとき)。
 - 実機での通し確認: 両 provider で `doctor` → `create` → `list` → `send` → `wait` → `messages` → `stop` → `resume` → `archive` → `delete`。
 - agent に使わせる確認: 付属スキルだけを持たせた Claude と Codex に「別の agent に作業を頼み、終わったら結果を要約して」と頼み、`--help` と付属スキルだけで迷わず通るかを見ます。詰まったところは help か付属スキルを直します。
 
 ### テストの方針
 
 - Mod: `claude plugin test` (doc-desk と同じ `claude-code/testing`)。受信箱の処理は純関数に切り出して単体で試します。
-- CLI: `node --test`。`HOME` を一時ディレクトリにして、セッション記録と transcript と Mod が書くファイルを fixture で置きます。tmux とシグナルは薄い関数に閉じ込めて差し替えます。
+- CLI: `node --test`。`HOME` を一時ディレクトリにして、セッション記録と transcript と Mod が書くファイルを fixture で置きます。シグナルは薄い関数に閉じ込めて差し替えます。`--wait` は、待っている間に fixture のセッション記録を足して確かめます。
 - 全コマンドについて、`--json` の stdout が JSON として読めること、stderr に JSON が混ざらないことを確かめます。
 - 型検査: `npx -y -p typescript tsc --noEmit` を両方に。
 
@@ -488,20 +538,23 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 |---|---|---|---|
 | C1 | セッション記録の `status` と `waitingFor` と `kind` が取る値。`procStart` が `/proc/<pid>/stat` の何と対応するか。プロセスが落ちたとき記録が残るか | `state` の対応表、生存判定、一覧に出す範囲 | 対話と `-p` で起動し、権限の確認を出し、kill して記録を見る |
 | C2 | Mod の `$.fs.list` / `$.fs.read` / `$.fs.write` が cwd の外 (`~/.agentctl`) に届くか | 届かなければ、共有ディレクトリを `$.process.run` の小さなスクリプト経由で読み書きする | 最小の Mod |
-| C3 | 対話モード (tmux の中) で、idle と busy のそれぞれで `$.prompt.submit` がどうなるか (即時 turn / キュー / `drop`) | `send` の `delivery` の値 | 最小の Mod + 手で送信 |
-| C4 | 新しいディレクトリで `claude --session-id` を tmux で起動したとき、信頼ダイアログの前にセッション記録と `session.start` が来るか | `create` の待ち方と `hint` | 手で起動 |
+| C3 | 対話モード (terminal と Desktop) で、idle と busy のそれぞれで `$.prompt.submit` がどうなるか (即時 turn / キュー / `drop`) | `send` の `delivery` の値 | 最小の Mod + 手で送信 |
+| C4 | Claude Desktop の Code セッションで、(a) セッション記録が書かれ `entrypoint` が `claude-desktop` になるか、(b) user の plugin (Mod) と function hooks が読み込まれるか (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` を Desktop にどう渡すか)、(c) `$.prompt.submit` で投入した文が Desktop の画面に出て turn が始まるか、(d) 信頼ダイアログの前にセッション記録が書かれるか | Desktop 対応が成り立つか。(b) が無理なら Desktop のセッションは一覧と読み取りだけにする | Desktop で起動して最小の Mod |
 | C5 | 人が起動した `codex` TUI の thread が `thread/loaded/list` に出て、`turn/steer` が TUI に反映されるか | Codex の「稼働中セッションの操作」が成り立つか | 手で起動 + proxy |
 | C6 | 実行中の turn の ID を `thread/read` か `thread/turns/list` のどちらで取るのが確実か | `send` (steer) と `stop` | proxy |
 | C7 | `thread/unsubscribe` の後、他に購読者がいなければ thread が `notLoaded` に戻るか。TUI が購読中ならどうなるか | Codex の `stop` の意味 | proxy |
 
 ## 8. MVP でやらないこと
 
-- 出力のストリーミング (`messages --follow`)、`attach` コマンド (tmux attach と `codex resume` を案内するだけにする)。
+- 出力のストリーミング (`messages --follow`)、`attach` コマンド。
+- agentctl による Claude のプロセスの起動 (tmux、headless の `claude -p` とも)。人に起動してもらう (2.3)。
 - `--jq` や `--json <fields>` による項目の選択 (パターン文書でも「要るときだけ」としている。`jq` で足りる)。
-- 複数マシン、リモートの daemon、Windows (tmux が前提のため)。
+- 複数マシン、リモートの daemon。Windows は、`/proc` を使う生存判定の代わりが要るので後回しにする。
 - アーカイブの取り消し (`unarchive`)、名前の変更。
 
 ## 9. 将来の候補
+
+- Claude Desktop を `claude://` のリンクで開き、指定のフォルダで新しいセッションを始める (リンクの形式が分かり、安定したら)。人への依頼が 1 手減る。
 
 - Mod の受信を `$.process.spawn` の常駐の子 (unix socket で待ち、届いたら stdout に 1 行出す) に替え、500 ms のポーリングを無くす。
 - `sessions messages --follow` (Claude は transcript の追記、Codex は通知の購読)。
