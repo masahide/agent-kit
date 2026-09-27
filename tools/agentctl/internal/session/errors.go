@@ -38,6 +38,7 @@ func ExitCode(code string) int {
 type Candidate struct {
 	ID       string   `json:"id"`
 	Provider Provider `json:"provider"`
+	State    State    `json:"state"`
 	Cwd      string   `json:"cwd,omitempty"`
 	Title    *string  `json:"title,omitempty"`
 }
