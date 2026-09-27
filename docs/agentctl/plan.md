@@ -1,6 +1,6 @@
 # agentctl 実装計画書 (MVP)
 
-作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI の実装言語を Go にした (4 章)。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
+作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI の実装言語を Go にした (4 章)。2026-09-27 の段階 0 の結果 (7 章) を反映し、Codex へは control socket に WebSocket で直接つなぐ形に変えた。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
 
 ## 要点
 
@@ -8,7 +8,7 @@
 - 主な利用者は人ではなく agent (Claude Code や Codex 自身) です。コマンドは「名詞 + 動詞」(`agentctl sessions list`) にそろえ、全コマンドで `--json` を出し、`doctor` と `resolve` と `raw` を持たせ、使い方を教える短いスキルを添えます (3 章)。
 - Claude の一覧と状態は、Claude Code 本体が稼働中のセッションごとに書く `~/.claude/sessions/<pid>.json` から読みます。Mod (`plugins/agentctl`) の仕事は、CLI が置いた受信箱のメッセージを `$.prompt.submit` で投入することと、実行中の turn を `$.turn.abort` で止めることだけです。Channels は使いません。
 - Claude のプロセスは agentctl が起動しません。人が terminal、Claude Desktop、VS Code で起動したセッションをそのまま使います。対象のセッションが動いていなければ、どこで何を起動すればよいかを返し、人に起動してもらいます (2.3)。
-- Codex は、Codex の共有 app-server daemon に `codex app-server proxy` 経由でつなぎ、JSON-RPC (`thread/*`, `turn/*`) を呼びます。Codex の TUI も既定でこの daemon を使うので、人が起動した TUI のセッションも操作できます。
+- Codex は、Codex の共有 app-server daemon の control socket (Unix socket 上の WebSocket) に直接つなぎ、JSON-RPC (`thread/*`, `turn/*`) を呼びます。Codex の TUI も既定でこの daemon を使うので、人が起動した TUI のセッションも操作できます。
 - 両者の差は `Adapter` という 1 つの interface で吸収します。
 - CLI は Go で書き、単一のバイナリにします。外部のパッケージは使わず、標準ライブラリだけで作ります。Mod は TypeScript です (Mod は TypeScript でしか書けないため)。常駐の agentctl daemon は作りません。
 
@@ -46,9 +46,9 @@ YAGNI (You Aren't Gonna Need It) の原則に従って実装します。いま�
 |---|---|---|
 | 稼働中のセッションを列挙する | Mod の API には無い (`$.session.*` は自分のセッションのことしか返さず、他のセッションを列挙する API は無い)。代わりに本体のセッション記録 `~/.claude/sessions/<pid>.json` を読む | 可。記録には `pid`, `sessionId`, `cwd`, `name`, `kind`, `status` (`busy` / `idle` など), `waitingFor`, `startedAt`, `updatedAt`, `statusUpdatedAt`, `procStart`, `version` がある。値の種類は未確認 → C1 |
 | 保存済み (止まっている) セッションを列挙する | transcript `~/.claude/projects/<cwd を変換した名前>/<sessionId>.jsonl` | 可 |
-| プロセスが生きているか、PID が使い回されていないか | セッション記録の `pid` と `procStart` を `/proc/<pid>/stat` と照合する | 可の見込み → C1 |
-| CLI からのメッセージを受ける | Mod の `$.clock.every` + `$.fs.list` + `$.fs.read` | 可の見込み。共有ディレクトリ (cwd の外) を読めるかは未確認 → C2 |
-| Claude に投入する | Mod の `$.prompt.submit({ text })` | 可 (doc-desk の V5, V7)。`{ drop }` で断られることがある。busy 中の振る舞いは未確認 → C3 |
+| プロセスが生きているか、PID が使い回されていないか | セッション記録の `pid` と `procStart` を `/proc/<pid>/stat` と照合する | 可 (C1: `procStart` は `/proc/<pid>/stat` の 22 番目の値と一致。強制終了すると記録が残る) |
+| CLI からのメッセージを受ける | Mod の `$.clock.every` + `$.fs.list` + `$.fs.read` | 可 (C2: cwd の外にも届く。`$.fs.list` は `{ name, kind, size, isLink }` の配列を返す) |
+| Claude に投入する | Mod の `$.prompt.submit({ text })` | 可 (C3: idle なら直ちに turn が始まる。busy なら今の turn の直後に次の turn として始まり、Promise もそこまで返らない。Claude には「The <plugin> plugin sent a message:」を前に付けた user turn として見える) |
 | 実行中の turn を止める | Mod の `$.turn.abort({ turnId })` (`turn.start` の `turnId`) | 可 (live-view で設計済み) |
 | 起動元を知る | セッション記録の `entrypoint` (`claude-desktop` / `claude-desktop-3p` / `local-agent` は Desktop、`claude-vscode` は VS Code) と `tmux` | 可。本体も同じ規則で `desktop` / `vscode` / `tmux` / `terminal` に分けている (バイナリで確認) |
 | プロセスを終わらせる | Mod からは不可 (終了 API が無い) | terminal と tmux のセッションだけ、CLI がセッション記録の `pid` に SIGTERM を送る。Desktop と VS Code のセッションは、それぞれのアプリが子プロセスを管理しているので送らない |
@@ -68,15 +68,15 @@ YAGNI (You Aren't Gonna Need It) の原則に従って実装します。いま�
 
 | やりたいこと | 使うもの | 判定 |
 |---|---|---|
-| 共有サーバにつなぐ | `codex app-server daemon start` (起動済みなら何もしない) と `codex app-server proxy` (stdio を control socket へ中継) | 可。agentctl は socket の場所を知らなくてよい |
+| 共有サーバにつなぐ | `codex app-server daemon start` (起動済みなら何もしない) と control socket `$CODEX_HOME/app-server-control/app-server-control.sock` | 可。socket の上は WebSocket (最初に HTTP の Upgrade、以後は JSON-RPC をテキストフレームで)。`codex app-server proxy` はバイト列を中継するだけなので、使っても WebSocket は自前で要る。agentctl は socket に直接つなぐ (段階 0 で確認) |
 | 人が起動した TUI を操作する | TUI は既定で共有 daemon を使う (`--no-daemon` で外れる) | 可の見込み → C5 |
 | 一覧 | `thread/loaded/list` (daemon に読み込み済み) と `thread/list` (保存済み。`cursor`, `limit`, `archived`, `cwd` で絞れる) | 可 |
 | 詳細と会話の中身 | `thread/read`、`thread/turns/list`、`thread/items/list` | 可 |
 | 状態 | `Thread.status`: `notLoaded` / `idle` / `active { activeFlags: [waitingOnApproval, waitingOnUserInput] }` / `systemError`。変化は `thread/status/changed` 通知 | 可 |
 | 新規 | `thread/start { cwd }` → 必要なら `turn/start` | 可 |
 | resume | `thread/resume` | 可 |
-| 送信 | idle なら `turn/start`、active なら `turn/steer { threadId, input, expectedTurnId }` | 可。`expectedTurnId` が必須なので、実行中の turn の ID を先に取る → C6 |
-| 停止 | `turn/interrupt { threadId, turnId }`、`thread/unsubscribe` | 可。unsubscribe で daemon から降ろせるかは未確認 → C7 |
+| 送信 | idle なら `turn/start`、active なら `turn/steer { threadId, input, expectedTurnId }` | 可 (C6: 実行中の turn は `thread/turns/list { limit: 1 }` (既定で新しい順) の先頭の `status: inProgress`。ID が違えば `-32600`) |
+| 停止 | `turn/interrupt { threadId, turnId }` | 可。`thread/unsubscribe` をしても thread は daemon に読み込まれたまま (C7)。`thread/archive` は実行中の turn を止めて thread を降ろす |
 | アーカイブ / 削除 | `thread/archive` / `thread/delete` (`thread/unarchive` もある) | 可。live な内部 worker は `-32600` で拒まれる |
 
 ## 2. アーキテクチャ
@@ -99,8 +99,7 @@ flowchart LR
       M -- "$.prompt.submit / $.turn.abort" --> CC
     end
     subgraph Codex
-      XA -- "JSON-RPC (stdio)" --> P[codex app-server proxy]
-      P -- control socket --> DM[codex app-server daemon]
+      XA -- "JSON-RPC over WebSocket<br>(control socket)" --> DM[codex app-server daemon]
       TUI[codex TUI] --- DM
     end
 ```
@@ -125,13 +124,13 @@ flowchart LR
 - `mod.json`: `{ v: 1, sessionId, pid, modVersion, startedAt }`。`/clear` で `sessionId` が変わったら、新しい ID のディレクトリにも書きます。
 - `meta.json`: `{ v: 1, name, archived: false, updatedAt }`。
 - `inbox/<msgId>.json`: `{ v: 1, id, kind: "prompt"|"interrupt", text?, createdAt }`。`msgId` は時刻順に並ぶ ID (`<epochms>-<rand>`) です。
-- `acks/<msgId>.json`: `{ v: 1, id, status: "submitted"|"dropped"|"aborted"|"error", detail?, at }`。
+- `acks/<msgId>.json`: `{ v: 1, id, status: "queued"|"submitted"|"dropped"|"aborted"|"no_turn"|"error", detail?, at }`。`queued` だけは途中の状態で、turn が始まると Mod が `submitted` に書き換えます (C3)。
 
 Mod の受信箱の処理:
 
 1. `$.clock.every(500ms)` で `inbox/` を `$.fs.list` し、`.json` だけを名前順に見ます。
 2. `acks/<msgId>.json` が既にある、またはメモリ上で処理済みのものは飛ばします (Mod はファイルを消せないため)。
-3. `prompt` は `$.prompt.submit({ text })`、`interrupt` は `$.turn.abort({ turnId })` (`turn.start` で覚えた main の turn) を呼び、結果を ack に書きます。
+3. `prompt` は、turn の実行中なら先に `queued` の ack を書いてから `$.prompt.submit({ text })` を呼び、返ったら `submitted` (`{ drop }` なら `dropped`) に書き換えます。`interrupt` は、実行中なら `$.turn.abort({ turnId })` (`turn.start` で覚えた main の turn) を呼んで `aborted`、実行中でなければ `no_turn` を書きます。
 4. 処理済みの `inbox` と `acks` のファイルは CLI が消します (ack を読んだ直後と、`sessions list` のついで)。
 
 heartbeat は持ちません。生存はセッション記録の `pid` と `procStart` で判断します。
@@ -248,7 +247,7 @@ Desktop と VS Code の子プロセスをシグナルで殺すと、アプリ側
 ```
 Discover
   agentctl doctor                                   使える provider と足りないもの
-  agentctl sessions list [--provider P] [--cwd DIR] [--state S] [--all] [--limit N] [--cursor C]
+  agentctl sessions list [--provider P] [--cwd DIR] [--state S] [--all] [--limit N] [--cursor C (--provider と一緒に)]
 
 Resolve
   agentctl sessions resolve <id-prefix | name | directory>
@@ -261,7 +260,7 @@ Wait
   agentctl sessions wait <id> [--until idle|stopped|waiting] [--timeout SEC]
 
 Write (実際に効きます)
-  agentctl sessions create <provider> <directory> [--prompt TEXT | --prompt-file F] [--name NAME] [--new] [--wait SEC] [-- <codex の引数>]
+  agentctl sessions create <provider> <directory> [--prompt TEXT | --prompt-file F] [--name NAME] [--new] [--wait SEC]
   agentctl sessions resume <id> [--wait SEC]
   agentctl sessions send <id> (--text TEXT | --text-file F | --text-file -)
   agentctl sessions stop <id> [--turn]
@@ -356,14 +355,14 @@ Exit codes: 0 ok, 2 bad arguments, 3 not found/ambiguous, 4 unsupported (no Mod)
 | コマンド | Claude | Codex |
 |---|---|---|
 | `doctor` | `claude --version`、`~/.claude/sessions/` が読めるか、Mod が有効か (稼働中のセッションの `mod.json` の有無) | `codex --version`、daemon につながるか (`initialize` が返るか) |
-| `sessions list` | セッション記録 (稼働中)。`--all` で transcript と `meta.json` から止まっているものも | `thread/loaded/list`。`--all` で `thread/list` (`cursor` をそのまま `nextCursor` に) |
+| `sessions list` | セッション記録 (稼働中)。`--all` で transcript と `meta.json` から止まっているものも | `thread/loaded/list`。`--all` で `thread/list` (`cursor` をそのまま `nextCursor` に)。`--state archived` で `thread/list { archived: true }` |
 | `sessions get` | セッション記録、`mod.json`、`meta.json`、transcript のパス | `thread/read` |
 | `sessions messages` | transcript の jsonl の末尾から user / assistant の行を N 件 | `thread/turns/list` か `thread/items/list` の末尾 N 件 |
 | `sessions wait` | `get` の繰り返し | `get` の繰り返し |
 | `sessions create` | `<dir>` の稼働中のセッションを返す。無ければ人への依頼 (2.3)。`--wait` で現れるまで待つ | `daemon start` → `thread/start { cwd }` → `--prompt` があれば `turn/start` |
 | `sessions resume` | 動いていればそのまま返す。止まっていれば人への依頼 (2.3) | `thread/resume` |
 | `sessions send` | `inbox/` に置き、`acks/` を最大 10 秒待つ | idle なら `turn/start`、active なら `turn/steer` |
-| `sessions stop` | 2.3 の表のとおり (terminal / tmux だけ SIGTERM) | `turn/interrupt` → `thread/unsubscribe` |
+| `sessions stop` | 2.3 の表のとおり (terminal / tmux だけ SIGTERM) | `turn/interrupt` だけ (thread は daemon に残る。C7) |
 | `sessions stop --turn` | `interrupt` を送るだけ | `turn/interrupt` だけ |
 | `sessions archive` | 止めてから `meta.json` に `archived: true` | `thread/archive` |
 | `sessions delete` | 止めてから共有ディレクトリと transcript の jsonl を消す | `thread/delete` |
@@ -418,8 +417,8 @@ JSON には、transcript の本文や token などの余計な中身は入れま
 
 ### 3.7 広さの調整
 
-- `sessions list` は既定で稼働中だけ、最大 20 件です。`--all` で止まっているものとアーカイブも含めます。
-- `--limit` と `--cursor` を持ち、`nextCursor` を返します。Codex は `thread/list` の cursor を、Claude は transcript の更新時刻順の位置を cursor にします。
+- `sessions list` は既定で稼働中だけ、provider ごとに最大 20 件です。`--all` で止まっているものも含めます。アーカイブしたものは `--state archived` のときだけ出します。
+- `--limit` と `--cursor` を持ち、`nextCursor` を返します。Codex は `thread/list` の cursor を、Claude は transcript の更新時刻順の位置を cursor にします。2 つの provider の cursor を 1 つにまとめる仕組みは作らず (YAGNI)、`--cursor` と `nextCursor` は `--provider` を付けたときだけにします。
 - `sessions messages` は既定で直近 10 件です。
 
 ### 3.8 raw
@@ -475,7 +474,7 @@ tools/agentctl/                   CLI (Go、module は github.com/masahide/agent
   go.mod                          標準ライブラリだけ。require は持たない
   main.go                         cli.Run(os.Args, stdout, stderr) を呼んで終了コードを返すだけ
   internal/cli/commands.go        コマンドの定義の表 (引数解析、検査、ヘルプの元。3.2)
-  internal/cli/parse.go           表から flag.FlagSet を組む、引数の検査
+  internal/cli/parse.go           表に沿った引数の解析と検査 (フラグを位置引数の後にも書けるよう自前で。標準ライブラリだけ)
   internal/cli/help.go            各階層のヘルプの文、help --json、近い候補 (編集距離)
   internal/cli/output.go          JSON / 表の出し分け、エラーの形、終了コード
   internal/cli/run.go             コマンドの振り分け、ID の解決、sessions wait
@@ -486,13 +485,14 @@ tools/agentctl/                   CLI (Go、module は github.com/masahide/agent
   internal/claude/protocol.go     共有ディレクトリのファイル形式 (Mod の protocol.ts と同じ形)
   internal/claude/start.go        人への依頼 (手順の文と、起動を見つける条件)
   internal/codex/adapter.go
-  internal/codex/rpc.go           `codex app-server proxy` 越しの JSON-RPC クライアント
+  internal/codex/ws.go            Unix socket 上の最小の WebSocket クライアント (テキストフレーム、ping への pong、close)
+  internal/codex/rpc.go           その上の JSON-RPC クライアント
   internal/*/..._test.go          go test
 docs/agentctl/plan.md             この文書
 docs/agentctl/usage.md            利用者ガイド (段階 6)
 ```
 
-- CLI は Go 1.24 以降で書き、`go build` で単一のバイナリにします。引数の解析は標準の `flag` を使い、cobra などの外部パッケージは使いません (YAGNI)。
+- CLI は Go 1.24 以降で書き、`go build` で単一のバイナリにします。引数の解析は標準ライブラリで自前に書き、cobra などの外部パッケージは使いません (YAGNI)。標準の `flag` は最初の位置引数で解析をやめ、`sessions send <id> --text ...` の形を読めないため使いません。
 - 配るのは `go install github.com/masahide/agent-kit/tools/agentctl@latest` だけにします。リリース用のバイナリの配布は、必要になってから考えます。
 - 共有ディレクトリのファイル形式は、Mod の `hooks/protocol.ts` と CLI の `internal/claude/protocol.go` に 2 回書くことになります。ずれを防ぐため、見本の JSON を Mod 側の `plugins/agentctl/tests/fixtures/protocol/` に置き、Mod のテストと Go のテスト (リポジトリの相対パスで読む) の両方がそれを読んで、自分の型で読み書きできることを確かめます。Mod のテストが plugin の外を読めるとは限らないので、置き場を Mod 側にします。形を変えるときは見本から直します。
 - 共有ディレクトリのファイル形式に `v: 1` を持たせ、読み手は知らない `v` を読まずにエラーにします。
@@ -507,7 +507,7 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 1: CLI の骨組み
 
-- `go.mod` と `main.go`、`internal/cli` (定義の表、表から組む `flag.FlagSet`、各階層のヘルプと近い候補と `help --json`、JSON とエラーの形と終了コード、ID の解決、`sessions wait`)、`internal/session` (型と Adapter)。
+- `go.mod` と `main.go`、`internal/cli` (定義の表、表に沿った引数の解析、各階層のヘルプと近い候補と `help --json`、JSON とエラーの形と終了コード、ID の解決、`sessions wait`)、`internal/session` (型と Adapter)。
 - 偽の adapter で `sessions list` / `get` / `resolve` / `wait`、エラーの形と終了コードをテストします。
 - ヘルプは、全コマンドで `--help` / `-h` / `help <...>` が同じ文を返すこと、引数の誤りの 4 種類 (3.2 の表) でヘルプが付いて終了コード 2 になること、`--json` のとき stdout が JSON だけで `error.usage` が入ることをテストします。
 
@@ -529,9 +529,9 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 5: Codex adapter
 
-- `rpc.go`: `codex app-server proxy` を `os/exec` で子として起動し、`initialize` → `initialized` → 要求 → 終了。行区切りの JSON で、ID の対応と通知の読み捨てだけを持つ小さなクライアントにします。つながらなければ `codex app-server daemon start` を 1 回呼んで再試行します。
+- `ws.go` と `rpc.go`: control socket に `net.Dial("unix")` でつなぎ、WebSocket の Upgrade の後、`initialize` → `initialized` → 要求 → close。ID の対応と通知の読み捨てだけを持つ小さなクライアントにします。つながらなければ `codex app-server daemon start` を 1 回呼んで再試行します。
 - `doctor` から `raw codex` まで、全コマンドを 1 つずつ。
-- テストは、JSON-RPC を返す偽の proxy を `AGENTCTL_CODEX_PROXY` で差し替えて行います。偽の proxy はテストのバイナリ自身を別の役で起動する形 (`os.Args[0]` と環境変数で切り替える、Go の標準のやり方) にし、スクリプトを別に持ちません。
+- テストは、テストの中で Unix socket に偽の daemon (WebSocket + JSON-RPC) を立て、`AGENTCTL_CODEX_SOCKET` で差し替えて行います。
 
 ### 段階 6: 仕上げ
 
@@ -555,17 +555,27 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 - 読めない記録は飛ばし、`doctor` に「読めない記録が N 件ある (Claude Code <version>)」と出します。
 - `kind` が `interactive` 以外 (subagent や背景の job など) の扱いは C1 で確かめ、MVP では一覧から外します。
 
-## 7. 未確認点 (段階 0 で確かめる)
+## 7. 未確認点と段階 0 の結果
 
-| 番号 | 確かめること | 影響 | 確かめ方 |
-|---|---|---|---|
-| C1 | セッション記録の `status` と `waitingFor` と `kind` が取る値。`procStart` が `/proc/<pid>/stat` の何と対応するか。プロセスが落ちたとき記録が残るか | `state` の対応表、生存判定、一覧に出す範囲 | 対話と `-p` で起動し、権限の確認を出し、kill して記録を見る |
-| C2 | Mod の `$.fs.list` / `$.fs.read` / `$.fs.write` が cwd の外 (`~/.agentctl`) に届くか | 届かなければ、共有ディレクトリを `$.process.run` の小さなスクリプト経由で読み書きする | 最小の Mod |
-| C3 | 対話モード (terminal と Desktop) で、idle と busy のそれぞれで `$.prompt.submit` がどうなるか (即時 turn / キュー / `drop`) | `send` の `delivery` の値 | 最小の Mod + 手で送信 |
-| C4 | Claude Desktop の Code セッションで、(a) セッション記録が書かれ `entrypoint` が `claude-desktop` になるか、(b) user の plugin (Mod) と function hooks が読み込まれるか (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` を Desktop にどう渡すか)、(c) `$.prompt.submit` で投入した文が Desktop の画面に出て turn が始まるか、(d) 信頼ダイアログの前にセッション記録が書かれるか | Desktop 対応が成り立つか。(b) が無理なら Desktop のセッションは一覧と読み取りだけにする | Desktop で起動して最小の Mod |
-| C5 | 人が起動した `codex` TUI の thread が `thread/loaded/list` に出て、`turn/steer` が TUI に反映されるか | Codex の「稼働中セッションの操作」が成り立つか | 手で起動 + proxy |
-| C6 | 実行中の turn の ID を `thread/read` か `thread/turns/list` のどちらで取るのが確実か | `send` (steer) と `stop` | proxy |
-| C7 | `thread/unsubscribe` の後、他に購読者がいなければ thread が `notLoaded` に戻るか。TUI が購読中ならどうなるか | Codex の `stop` の意味 | proxy |
+段階 0 (2026-09-27) は、Claude Code 2.1.283 を `-p --input-format stream-json` で動かし続けて最小の Mod を載せ、Codex CLI 0.157.1 の daemon に Python で WebSocket をつないで確かめました。この環境では対話モードの `claude` と `codex` の TUI はログインを求められて先に進めず、Claude Desktop もありません。
+
+| 番号 | 確かめること | 結果 |
+|---|---|---|
+| C1 | セッション記録の値と生存判定 | `status` は `busy` / `idle` を確認。`procStart` は `/proc/<pid>/stat` の 22 番目 (起動時刻の clock tick) と一致。正常終了で記録は消え、`kill -9` では残る。`-p` でも `kind` は `interactive` (`entrypoint` は環境変数から継ぐ)。`waitingFor` の値は未確認 (権限の確認を出せなかった) |
+| C2 | Mod の fs が cwd の外に届くか | 届く。`$.fs.list` は `{ name, kind, size, isLink }` の配列、`$.fs.write` は親ディレクトリも作る。`sh -c 'echo $PPID'` で claude の PID も取れた |
+| C3 | `$.prompt.submit` の idle / busy | idle: 直ちに turn が始まる。busy: 今の turn が終わった直後 (約 10 ms) に次の turn として始まる。どちらも Promise は turn が始まってから `{ text, origin }` で返る。→ Mod は busy のとき先に `queued` の ack を書き、始まったら `submitted` に書き換える |
+| C3b | `$.turn.abort` | 実行中なら止まり、`turn.complete` の `reason` が `aborted`、記録の `status` が `idle` に戻る。実行中でなければ「no turn is running」で throw する → ack は `no_turn` |
+| C4 | Claude Desktop | 未確認 (この環境に無い)。段階 6 で手元の機械で確かめる |
+| C5 | codex TUI の thread を操作できるか | 未確認 (TUI がログインを求める)。daemon の上で agentctl が作った thread は、`thread/loaded/list` / `turn/start` / `turn/steer` / `turn/interrupt` / `thread/archive` / `thread/delete` がすべて通った |
+| C6 | 実行中の turn の ID | `thread/turns/list { limit: 1 }` (既定で新しい順) の先頭が `inProgress` ならその ID。`turn/steer` は `expectedTurnId` が違えば `-32600`、実行中の turn が無ければ「no active turn to steer」 |
+| C7 | `thread/unsubscribe` で降ろせるか | 降りない (読み込まれたまま)。`thread/archive` は実行中の turn を止めて `notLoaded` にする。→ Codex の `stop` は `turn/interrupt` だけにする |
+
+ほかに分かったこと:
+
+- Codex の control socket は WebSocket を話す。`codex app-server proxy` はバイトの中継なので、使っても WebSocket は自前で要る。→ agentctl は socket に直接つなぐ。
+- Codex の `Thread` は `cwd` を `environments[0].cwd` に持ち、`createdAt` / `updatedAt` は秒。会話は `thread/items/list { sortDirection: "desc", limit }` の `userMessage` / `agentMessage` で読める。
+- `thread/list` は turn が 1 つも無い thread を返さない。
+- Claude の transcript には `{"type":"ai-title","aiTitle":...}` の行があり、タイトルに使える。
 
 ## 8. MVP でやらないこと
 
