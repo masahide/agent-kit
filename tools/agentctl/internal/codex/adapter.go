@@ -60,8 +60,14 @@ func (a *Adapter) conn(ctx context.Context) (*client, error) {
 		}
 	}
 	if err != nil {
+		if a.StartDaemon != nil {
+			if _, lerr := exec.LookPath("codex"); lerr != nil {
+				return nil, session.Errf(session.CodeProviderUnavailable, "codex is not installed (not on PATH)").
+					WithHint("install it with: npm i -g @openai/codex")
+			}
+		}
 		return nil, session.Errf(session.CodeProviderUnavailable, "cannot reach the Codex app-server daemon at %s: %v", a.Socket, err).
-			WithHint("install the codex CLI, or run: codex app-server daemon start")
+			WithHint("run: codex app-server daemon start")
 	}
 	return c, nil
 }

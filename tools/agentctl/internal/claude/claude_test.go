@@ -84,6 +84,10 @@ func TestModWithoutPid(t *testing.T) {
 	if e.a.modOK(r) {
 		t.Error("a mod.json from before the process started is stale")
 	}
+	e.write(e.a.store.modPath(idA), ModFile{V: 1, SessionID: idA, PID: 2345, StartedAt: 1500})
+	if !e.a.modOK(r) {
+		t.Error("a wrong pid (Git Bash's MSYS $PPID on Windows) with a later mod.json counts")
+	}
 }
 
 func TestStopDoesNotEndTheProcessWhereItCannot(t *testing.T) {
