@@ -1,6 +1,6 @@
 # agentctl 実装計画書 (MVP)
 
-作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI の実装言語を Go にした (4 章)。2026-09-27 の段階 0 の結果 (7 章) を反映し、Codex へは control socket に WebSocket で直接つなぐ形に変えた。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
+作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI の実装言語を Go にした (4 章)。2026-09-27 の段階 0 の結果 (7 章) を反映し、Codex へは control socket に WebSocket で直接つなぐ形に変えた。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 段階 0〜5 を実装済み (2026-09-27)。段階 6 の実機での確認のうち、Claude Desktop (C4) と codex TUI (C5) が残っています。使い方は [usage.md](usage.md)
 
 ## 要点
 
@@ -157,7 +157,7 @@ type Session struct {
 
 type Message struct {
 	ID   string    `json:"id"`
-	Role string    `json:"role"` // user | assistant | tool
+	Role string    `json:"role"` // user | assistant (ツールの呼び出しと結果は含めない)
 	Text string    `json:"text"`
 	At   time.Time `json:"at"`
 }
@@ -467,34 +467,35 @@ plugins/agentctl/                 Claude Mod (受信箱) と付属スキル
   hooks/protocol.ts               共有ディレクトリのファイル形式と定数 (CLI の protocol.go と同じ形)
   hooks/inbox.ts                  受信箱の処理 (純関数。テストしやすくする)
   skills/agentctl/SKILL.md        付属スキル (3.9)
-  tests/register.test.ts          claude plugin test
+  tests/inbox.test.ts             claude plugin test (受信箱の純関数)
+  tests/register.test.ts          claude plugin test ($ を模して受信箱の監視を通しで)
   tests/fixtures/protocol/*.json  共有ディレクトリのファイルの見本 (CLI の Go のテストも読む)
+  tests/fixtures/protocol.ts      同じ見本の TS 版 (Mod のテストは JSON を import できない)
   README.md
 tools/agentctl/                   CLI (Go、module は github.com/masahide/agent-kit/tools/agentctl)
   go.mod                          標準ライブラリだけ。require は持たない
-  main.go                         cli.Run(os.Args, stdout, stderr) を呼んで終了コードを返すだけ
+  main.go                         cli.Run を呼んで終了コードを返すだけ
   internal/cli/commands.go        コマンドの定義の表 (引数解析、検査、ヘルプの元。3.2)
-  internal/cli/parse.go           表に沿った引数の解析と検査 (フラグを位置引数の後にも書けるよう自前で。標準ライブラリだけ)
-  internal/cli/help.go            各階層のヘルプの文、help --json、近い候補 (編集距離)
-  internal/cli/output.go          JSON / 表の出し分け、エラーの形、終了コード
-  internal/cli/run.go             コマンドの振り分け、ID の解決、sessions wait
-  internal/session/session.go     共通の型と Adapter interface
-  internal/claude/adapter.go
-  internal/claude/records.go      ~/.claude/sessions と transcript の読み取り、生存判定
+  internal/cli/parse.go           表に沿った引数の解析と検査、近い候補 (編集距離)
+  internal/cli/help.go            各階層のヘルプの文と help --json
+  internal/cli/run.go             コマンドの振り分け、出力とエラーの形と終了コード、ID の解決、sessions wait、--wait
+  internal/session/               共通の型、Adapter interface、エラーの形と終了コード
+  internal/claude/adapter.go      Adapter の実装、人への依頼 (手順の文)、doctor
+  internal/claude/records.go      ~/.claude/sessions の読み取り、生存判定、起動元
+  internal/claude/transcript.go   transcript の列挙、先頭 (cwd、題名) と会話の読み取り
   internal/claude/inbox.go        共有ディレクトリの読み書き (atomic write、掃除)
   internal/claude/protocol.go     共有ディレクトリのファイル形式 (Mod の protocol.ts と同じ形)
-  internal/claude/start.go        人への依頼 (手順の文と、起動を見つける条件)
   internal/codex/adapter.go
   internal/codex/ws.go            Unix socket 上の最小の WebSocket クライアント (テキストフレーム、ping への pong、close)
   internal/codex/rpc.go           その上の JSON-RPC クライアント
-  internal/*/..._test.go          go test
+  internal/*/..._test.go          go test (Codex はテストの中で偽の daemon を Unix socket に立てる)
 docs/agentctl/plan.md             この文書
 docs/agentctl/usage.md            利用者ガイド (段階 6)
 ```
 
 - CLI は Go 1.24 以降で書き、`go build` で単一のバイナリにします。引数の解析は標準ライブラリで自前に書き、cobra などの外部パッケージは使いません (YAGNI)。標準の `flag` は最初の位置引数で解析をやめ、`sessions send <id> --text ...` の形を読めないため使いません。
 - 配るのは `go install github.com/masahide/agent-kit/tools/agentctl@latest` だけにします。リリース用のバイナリの配布は、必要になってから考えます。
-- 共有ディレクトリのファイル形式は、Mod の `hooks/protocol.ts` と CLI の `internal/claude/protocol.go` に 2 回書くことになります。ずれを防ぐため、見本の JSON を Mod 側の `plugins/agentctl/tests/fixtures/protocol/` に置き、Mod のテストと Go のテスト (リポジトリの相対パスで読む) の両方がそれを読んで、自分の型で読み書きできることを確かめます。Mod のテストが plugin の外を読めるとは限らないので、置き場を Mod 側にします。形を変えるときは見本から直します。
+- 共有ディレクトリのファイル形式は、Mod の `hooks/protocol.ts` と CLI の `internal/claude/protocol.go` に 2 回書くことになります。ずれを防ぐため、見本の JSON を Mod 側の `plugins/agentctl/tests/fixtures/protocol/` に置き、Go のテスト (リポジトリの相対パスで読む) が自分の型で読み書きできることを確かめます。Mod のテストは JSON を import できない (`claude plugin test` がコードの拡張子のファイルしか読まない) ので、同じ中身を 1 行ずつ `tests/fixtures/protocol.ts` に置き、Mod のテストはそれを使います。JSON と TS 版のずれは Go の `TestProtocolFixtures` が見つけます。形を変えるときは見本から直します。
 - 共有ディレクトリのファイル形式に `v: 1` を持たせ、読み手は知らない `v` を読まずにエラーにします。
 
 ## 5. 実装手順
