@@ -1,6 +1,6 @@
 # agentctl 実装計画書 (MVP)
 
-作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
+作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
 
 ## 要点
 
@@ -11,6 +11,15 @@
 - Codex は、Codex の共有 app-server daemon に `codex app-server proxy` 経由でつなぎ、JSON-RPC (`thread/*`, `turn/*`) を呼びます。Codex の TUI も既定でこの daemon を使うので、人が起動した TUI のセッションも操作できます。
 - 両者の差は `Adapter` という 1 つの interface で吸収します。
 - CLI は依存ゼロの TypeScript を Node 22 の型除去で直接動かします (ビルド無し)。常駐の agentctl daemon は作りません。
+
+## 開発原則
+
+YAGNI (You Aren't Gonna Need It) の原則に従って実装します。いま必要なものだけを作り、「いずれ要りそう」なものは、実際に要るまで作りません。
+
+- 作るのは 3 章に書いたコマンドとフラグだけです。8 章 (MVP でやらないこと) と 9 章 (将来の候補) は、実際に必要になってから計画を直して作ります。
+- 抽象化は、使う場所が 2 つ以上あるときだけにします。`Adapter` は Claude と Codex の 2 つが使うので置きますが、その中身や設定の項目、差し替えの口を先回りして増やしません。
+- 設定ファイル、プラグイン機構、キャッシュ、再試行の仕組みは、必要が確かめられるまで作りません。
+- 7 章の確認で要らないと分かったものは、書きかけでも消します。この文書も、実装に合わせて削ります。
 
 ## 用語
 
