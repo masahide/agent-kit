@@ -50,8 +50,8 @@ export function register(on: On) {
       $.clock.now().then(now => $.fs.write(`${dir}/acks/${id}.json`, JSON.stringify(makeAck(id, status, now, detail))))
 
     // `sh` の親が claude のプロセスです。CLI はこの pid をセッション記録の pid と照合し、
-    // 前のプロセスが残した mod.json を使わないようにします。sh が無い (Windows) ときは 0 を書き、
-    // CLI は startedAt がプロセスの起動より後かどうかで照合します。
+    // 前のプロセスが残した mod.json を使わないようにします。Windows では sh が無い (0 を書く) か、
+    // Git Bash の sh で MSYS の pid になり一致しないので、CLI は startedAt がプロセスの起動より後かどうかでも照合します。
     let pid = 0
     try {
       const out = await $.process.run(['sh', '-c', 'echo $PPID'])

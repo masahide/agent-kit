@@ -89,18 +89,17 @@ func (a *Adapter) live() map[string]Record {
 	return out
 }
 
-// modOK reports whether the Mod in the running process wrote mod.json. The
-// Mod gets its pid from `sh`; where there is no sh (Windows) it writes pid 0,
-// and a mod.json written after the process started counts instead.
+// modOK reports whether the Mod in the running process wrote mod.json: its
+// pid matches, or it was written after the process started. The pid alone is
+// not enough: the Mod gets it from `sh`, which on Windows is missing (pid 0)
+// or is Git Bash, whose $PPID is an MSYS pid, not the Windows one. The start
+// time still rejects a mod.json left by an earlier process.
 func (a *Adapter) modOK(r Record) bool {
 	m, ok := a.store.mod(r.SessionID)
 	if !ok {
 		return false
 	}
-	if m.PID != 0 {
-		return m.PID == r.PID
-	}
-	return r.StartedAt > 0 && m.StartedAt >= r.StartedAt
+	return m.PID == r.PID || (r.StartedAt > 0 && m.StartedAt >= r.StartedAt)
 }
 
 // terminable reports whether Stop may end the process of r.
