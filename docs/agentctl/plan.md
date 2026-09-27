@@ -1,6 +1,6 @@
 # agentctl 実装計画書 (MVP)
 
-作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
+作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
 
 ## 要点
 
@@ -23,7 +23,7 @@
 | 受信箱 (inbox) | CLI が Claude のセッションに届けたいメッセージを 1 件 1 ファイルで置くディレクトリです |
 | ack | Mod が受信箱のメッセージを処理した結果を書くファイルです。CLI はこれを見て送信の成否を知ります |
 | daemon (Codex) | `codex app-server daemon start` で動く共有の app-server です。control socket で待ち受けます |
-| 付属スキル | agent に agentctl の使い方を教える短い SKILL.md です (3.8) |
+| 付属スキル | agent に agentctl の使い方を教える短い SKILL.md です (3.9) |
 
 ## 1. 既存 API と Mod で実現できる範囲 (調査結果)
 
@@ -214,13 +214,79 @@ Global
 
 人向けに、最初の構想の短い名前を別名として残します: `ps` = `sessions list`, `info` = `sessions get`, `new` = `sessions create`, `send` / `stop` / `archive` / `delete` = `sessions <同名>`。`--help` では正式な形だけを見せ、別名は末尾に 1 行で書きます。
 
-### 3.2 ID と解決
+### 3.2 ヘルプと引数の誤り
+
+ヘルプは各階層で出せるようにし、引数を間違えたときは、そのコマンドのヘルプを添えて返します。agent は `--help` を読んで打ち直すので、エラーの 1 行だけでは次の手が分かりません。
+
+出し方 (どれも同じ文を stdout に出し、終了コード 0):
+
+```
+agentctl --help                    全体: 名詞の一覧、Global フラグ、最初に打つコマンド
+agentctl sessions --help           sessions の動詞の一覧と、それぞれの 1 行説明
+agentctl sessions send --help      send の書式、引数、フラグ、例、JSON の形、終了コード
+agentctl help sessions send        上と同じ (-h も同じ)
+agentctl                           引数無しは agentctl --help と同じ
+agentctl sessions                  動詞無しは agentctl sessions --help と同じ
+```
+
+各コマンドのヘルプに載せるもの:
+
+```
+Usage: agentctl sessions send <id> (--text TEXT | --text-file F | --text-file -) [--json]
+
+Send a message to a session. Starts a turn if idle; steers the running turn (codex)
+or submits it to the prompt (claude) if busy.
+This is a live write.
+
+Arguments:
+  <id>                session id or unique id prefix (see: agentctl sessions resolve)
+
+Flags:
+  --text TEXT         message body
+  --text-file F       read the body from F ("-" for stdin)
+  --json              print JSON only on stdout
+
+Examples:
+  agentctl --json sessions send 0199a1c2 --text "run the tests again"
+  echo "..." | agentctl --json sessions send 0199a1c2 --text-file -
+
+Output (--json):
+  { "session": Session, "delivery": "turn_started"|"steered"|"submitted"|"queued", "next": [string] }
+
+Exit codes: 0 ok, 2 bad arguments, 3 not found/ambiguous, 4 unsupported (no Mod), 1 other
+```
+
+引数を間違えたとき (終了コード 2):
+
+| 誤り | 出すもの |
+|---|---|
+| 知らない名詞・動詞 (`agentctl sesions list`, `agentctl sessions lsit`) | エラー 1 行、近い候補 (`did you mean: sessions list?`、編集距離 2 以内)、1 つ上の階層のヘルプ (動詞の一覧) |
+| 知らないフラグ、値の無いフラグ、必須の引数が無い、同時に使えないフラグ | エラー 1 行と、そのコマンドのヘルプ全文 |
+| 値の形が違う (`--limit abc`, `--until done`) | エラー 1 行 (取れる値を並べる) と、そのコマンドのヘルプ全文 |
+| `delete` に `--yes` が無い | `confirmation_required` と、そのコマンドのヘルプ全文 |
+
+- `--json` が無いときは、エラーとヘルプを stderr に出します (stdout は空)。
+- `--json` のときは、stdout を JSON だけに保つため、ヘルプを `error` の中に入れます。stderr にも同じヘルプを出します。
+
+```json
+{ "error": { "code": "invalid_argument", "message": "unknown flag: --txt",
+             "suggestions": ["--text"],
+             "usage": "Usage: agentctl sessions send <id> (--text TEXT | ...)\n...",
+             "help": "agentctl sessions send --help" } }
+```
+
+- `agentctl --json help sessions send` は、ヘルプを JSON (`{ command, usage, description, args, flags, examples, output, exitCodes, isWrite }`) で返します。agent が書式を機械的に確かめたいとき用です。
+- 実行時の失敗 (`not_found`, `provider_error` など) ではヘルプを出しません。引数は正しいので、ヘルプを出すと本当の原因が埋もれるからです。代わりに `hint` で次のコマンドを示します。
+
+作り方: コマンドの定義 (名前、説明、引数、フラグ、例、出力の形、書き込みかどうか) を `src/commands.ts` に 1 つの表として持ち、引数解析、検査、ヘルプの文、`help --json` をすべてこの表から作ります。ヘルプと実際の挙動がずれないようにするためです。
+
+### 3.3 ID と解決
 
 - 各コマンドの `<id>` は、完全な ID か、ID の前方一致 (docker と同じ) です。両 provider の ID をまとめて照合し、1 件に決まらなければ `ambiguous` エラーで候補を返します。
 - `sessions resolve` は、ID の前方一致、`--name` で付けた名前、ディレクトリ (その cwd で動いているセッション) を受け取り、候補を返します。人の言葉 (「api のほうの Codex」) を ID に変える入口です。
 - 出力の `id` は常に完全な ID です。agent は以後それを使います。
 
-### 3.3 各コマンドの provider ごとの中身
+### 3.4 各コマンドの provider ごとの中身
 
 | コマンド | Claude | Codex |
 |---|---|---|
@@ -239,7 +305,7 @@ Global
 
 `send` の意味の揃え方: Codex は active 中の送信を `turn/steer` にします。Claude は `$.prompt.submit` に任せ、実際にどうなったかを `delivery` (`submitted` / `queued`) で返します。busy 中の振る舞いは C3 で確かめます。
 
-### 3.4 JSON の形
+### 3.5 JSON の形
 
 成功 (stdout、終了コード 0。結果が空でも 0):
 
@@ -266,13 +332,13 @@ Global
              "hint": "use a longer prefix or --provider" } }
 ```
 
-`error.code` の一覧: `invalid_argument`, `not_found`, `ambiguous_id`, `confirmation_required`, `unsupported` (例: Mod の無いセッションへの `send`), `provider_unavailable` (tmux / codex / daemon が無い), `timeout` (`wait` と `send` の ack), `provider_error` (Codex の JSON-RPC エラーをそのまま `detail` に)。
+`error.code` の一覧: `invalid_argument` (3.2 のとおり `usage` と `suggestions` を付ける), `not_found`, `ambiguous_id`, `confirmation_required`, `unsupported` (例: Mod の無いセッションへの `send`), `provider_unavailable` (tmux / codex / daemon が無い), `timeout` (`wait` と `send` の ack), `provider_error` (Codex の JSON-RPC エラーをそのまま `detail` に)。
 
 `--json` が無いときは人向けの表と文を stdout に出し、エラーは stderr に 1 行で出します。
 
 JSON には、transcript の本文や token などの余計な中身は入れません。`messages` の本文は各 2,000 文字で切り、切ったことを `truncated: true` で示します。
 
-### 3.5 終了コード
+### 3.6 終了コード
 
 | コード | 意味 |
 |---|---|
@@ -284,18 +350,18 @@ JSON には、transcript の本文や token などの余計な中身は入れま
 
 `doctor --json` は、何も入っていない環境でも終了コード 0 で、足りないものを項目ごとに返します。
 
-### 3.6 広さの調整
+### 3.7 広さの調整
 
 - `sessions list` は既定で稼働中だけ、最大 20 件です。`--all` で止まっているものとアーカイブも含めます。
 - `--limit` と `--cursor` を持ち、`nextCursor` を返します。Codex は `thread/list` の cursor を、Claude は transcript の更新時刻順の位置を cursor にします。
 - `sessions messages` は既定で直近 10 件です。
 
-### 3.7 raw
+### 3.8 raw
 
 - `raw codex <method>` は、agentctl がつないだ daemon に JSON-RPC をそのまま投げ、結果をそのまま返します。`thread/delete` などの書き込みも通るので、`--help` に「実際に効きます」と書きます。
 - `raw claude record <id>` は、セッション記録と `mod.json` と `launch.json` をまとめて返します。読み取りだけです。
 
-### 3.8 付属スキル
+### 3.9 付属スキル
 
 `plugins/agentctl/skills/agentctl/SKILL.md` に置きます。README より短く、道順だけを書きます。Codex でも使えるよう、Claude 固有の記法は使いません (`~/.codex/skills/` に写せば使える)。
 
@@ -333,14 +399,15 @@ plugins/agentctl/                 Claude Mod (受信箱) と付属スキル
   hooks/register.ts               session.start (mod.json)、turn.start (turnId)、受信箱の監視
   hooks/protocol.ts               共有ディレクトリのファイル形式と定数 (CLI も import する)
   hooks/inbox.ts                  受信箱の処理 (純関数。テストしやすくする)
-  skills/agentctl/SKILL.md        付属スキル (3.8)
+  skills/agentctl/SKILL.md        付属スキル (3.9)
   tests/register.test.ts          claude plugin test
   README.md
 tools/agentctl/                   CLI
   package.json                    "type": "module"、"bin"、依存なし
   bin/agentctl                    #!/usr/bin/env node → src/main.ts を読むだけ
   src/main.ts                     引数解析、コマンドの振り分け
-  src/help.ts                     --help の文 (3.1 と同じ)
+  src/commands.ts                 コマンドの定義の表 (引数解析、検査、ヘルプの元。3.2)
+  src/help.ts                     表からヘルプの文と help --json を作る、近い候補の計算
   src/output.ts                   JSON / 表の出し分け、エラーの形、終了コード
   src/session.ts                  共通の型、Adapter interface、ID の解決
   src/wait.ts                     sessions wait
@@ -368,8 +435,9 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 1: CLI の骨組み
 
-- `main.ts` の引数解析 (`node:util` の `parseArgs`)、`help.ts`、`output.ts` (JSON とエラーの形、終了コード)、`session.ts` (型と ID の解決)、`wait.ts`。
+- `commands.ts` の定義の表、`main.ts` の引数解析 (`node:util` の `parseArgs` を表から組む)、`help.ts` (各階層のヘルプ、近い候補、`help --json`)、`output.ts` (JSON とエラーの形、終了コード)、`session.ts` (型と ID の解決)、`wait.ts`。
 - 偽の adapter で `sessions list` / `get` / `resolve` / `wait`、エラーの形と終了コードをテストします。
+- ヘルプは、全コマンドで `--help` / `-h` / `help <...>` が同じ文を返すこと、引数の誤りの 4 種類 (3.2 の表) でヘルプが付いて終了コード 2 になること、`--json` のとき stdout が JSON だけで `error.usage` が入ることをテストします。
 
 ### 段階 2: Claude の読み取り
 
