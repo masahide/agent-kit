@@ -455,9 +455,49 @@ func (a *Adapter) Send(ctx context.Context, id, text string) (session.Delivery, 
 			}
 		}
 		d = session.TurnStarted
-		return c.call("turn/start", map[string]any{"threadId": id, "input": textInput(text)}, nil)
+		var started struct {
+			Turn struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		}
+		if err := c.call("turn/start", map[string]any{"threadId": id, "input": textInput(text)}, &started); err != nil {
+			return err
+		}
+		return waitStarted(ctx, c, id, started.Turn.ID)
 	})
 	return d, err
+}
+
+// startWait bounds how long send waits for the daemon to mark the new turn.
+var startWait = 3 * time.Second
+
+// waitStarted gives the daemon up to startWait to report the new turn as
+// active (or already finished), so that `sessions wait --until idle` right
+// after `send` does not see the idle status from before the turn.
+func waitStarted(ctx context.Context, c *client, id, turnID string) error {
+	deadline := time.Now().Add(startWait)
+	for time.Now().Before(deadline) {
+		var r threadResp
+		if err := c.call("thread/read", map[string]any{"threadId": id}, &r); err != nil || r.Thread.Status.Type != "idle" {
+			return nil // unreadable while the turn runs (seen on Windows), or active
+		}
+		var page struct {
+			Data []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"data"`
+		}
+		if err := c.call("thread/turns/list", map[string]any{"threadId": id, "limit": 1}, &page); err == nil &&
+			len(page.Data) > 0 && page.Data[0].ID == turnID && page.Data[0].Status != "inProgress" {
+			return nil // the turn already finished
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return nil
 }
 
 func (a *Adapter) Stop(ctx context.Context, id string, turnOnly bool) (session.StopResult, error) {

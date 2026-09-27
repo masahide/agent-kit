@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/masahide/agent-kit/tools/agentctl/internal/session"
 )
@@ -184,6 +185,8 @@ func TestSendStartsOrSteers(t *testing.T) {
 	})
 	a := &Adapter{Socket: d.socket}
 	ctx := context.Background()
+	startWait = 0 // the fake daemon never turns active by itself here
+	defer func() { startWait = 3 * time.Second }()
 	if got, err := a.Send(ctx, tid, "hi"); err != nil || got != session.TurnStarted {
 		t.Fatalf("idle: %v %v", got, err)
 	}
@@ -287,5 +290,36 @@ func TestLoadedThreadThatCannotBeReadIsRunning(t *testing.T) {
 	var se *session.Error
 	if _, err := a.Get(context.Background(), "not-loaded"); !errors.As(err, &se) {
 		t.Fatalf("a thread that is not loaded still fails: %v", err)
+	}
+}
+
+func TestSendWaitsUntilTheTurnIsActive(t *testing.T) {
+	var mu sync.Mutex
+	reads := 0
+	d := fakeDaemon(t, func(m string, p map[string]any) (any, *RPCError) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch m {
+		case "thread/read":
+			reads++
+			if reads <= 3 { // before the send, and twice while the daemon has not marked the turn
+				return map[string]any{"thread": th(tid, "idle")}, nil
+			}
+			return map[string]any{"thread": th(tid, "active")}, nil
+		case "turn/start":
+			return map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}}, nil
+		case "thread/turns/list":
+			return map[string]any{"data": []any{map[string]any{"id": "turn-1", "status": "inProgress"}}}, nil
+		}
+		return nil, &RPCError{Code: -32601, Message: "unknown"}
+	})
+	a := &Adapter{Socket: d.socket}
+	if got, err := a.Send(context.Background(), tid, "count"); err != nil || got != session.TurnStarted {
+		t.Fatalf("%v %v", got, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if reads != 4 {
+		t.Errorf("send returns once the thread is active: %d reads", reads)
 	}
 }
