@@ -61,6 +61,7 @@ func topHelp(root *node) string {
 	b.WriteString("  --json                print JSON only on stdout (diagnostics go to stderr)\n")
 	b.WriteString("  --provider P          claude or codex: limit id resolution and lists to one provider\n")
 	b.WriteString("  -h, --help            help for any command, e.g. agentctl sessions send --help\n")
+	b.WriteString("  --version             print the agentctl version\n")
 	b.WriteString("\nExit codes: " + exitCodesText + "\n")
 	names := make([]string, 0, len(aliases))
 	for k := range aliases {

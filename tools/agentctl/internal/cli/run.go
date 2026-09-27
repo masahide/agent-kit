@@ -19,6 +19,10 @@ import (
 	"github.com/masahide/agent-kit/tools/agentctl/internal/session"
 )
 
+// Version is set at release builds with
+// -ldflags "-X github.com/masahide/agent-kit/tools/agentctl/internal/cli.Version=<version>".
+var Version = "dev"
+
 // Deps are the parts of the outside world a command touches. Tests replace them.
 type Deps struct {
 	Adapters []session.Adapter
@@ -89,6 +93,14 @@ func RunWith(ctx context.Context, args []string, deps Deps, stdin io.Reader, std
 	if uerr != nil {
 		jsonMode := contains(args, "--json")
 		return writeUsageError(uerr, jsonMode, root, stdout, stderr)
+	}
+	if p.globals.Version {
+		if p.globals.JSON {
+			writeJSON(stdout, map[string]string{"version": Version})
+		} else {
+			fmt.Fprintf(stdout, "agentctl %s\n", Version)
+		}
+		return 0
 	}
 	c := &Ctx{Context: ctx, Deps: deps, Stdin: stdin, Stdout: stdout, Stderr: stderr, JSON: p.globals.JSON, Provider: p.globals.Provider}
 	if p.globals.Help {

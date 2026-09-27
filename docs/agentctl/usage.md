@@ -8,14 +8,48 @@ agentctl は、動いている Claude Code と Codex のセッションを 1 つ
 
 ### 1.1 CLI
 
-Go 1.24 以降で入れます。
+macOS / Linux:
 
-```bash
-go install github.com/masahide/agent-kit/tools/agentctl@latest
+```sh
+curl -fsSL https://raw.githubusercontent.com/masahide/agent-kit/main/tools/agentctl/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/masahide/agent-kit/main/tools/agentctl/install.ps1 | iex
+```
+
+どちらも GitHub Releases の最新の `agentctl-v*` から、OS と CPU に合うバイナリを取り、`checksums.txt` で確かめてから置きます。
+
+- 置き場は `~/.local/bin/agentctl` (Windows は `%USERPROFILE%\.local\bin\agentctl.exe`) です。
+- Windows ではユーザーの PATH に足します。新しいターミナルから使えます。
+- macOS と Linux で PATH に無いときは、足し方を表示します。
+
+環境変数で変えられるもの:
+
+| 変数 | 意味 |
+|---|---|
+| `AGENTCTL_VERSION` | 入れる版 (例 `0.1.0`)。既定は最新 |
+| `AGENTCTL_INSTALL_DIR` | 置き場 |
+| `AGENTCTL_REPO` | 配布元のリポジトリ (既定 `masahide/agent-kit`) |
+
+Go があれば、ソースからも入れられます (`cd tools/agentctl && go install .`)。
+
+入れたら確かめます。
+
+```sh
+agentctl --version
 agentctl --json doctor
 ```
 
 `doctor` は、claude と codex が見つかるか、Claude のセッション記録が読めるか、Mod が載っているセッションがいくつあるか、Codex の daemon につながるかを返します。何も入っていなくても終了コード 0 で、足りないものを `problems` に並べます。
+
+リリースの出し方 (メンテナ向け): タグ `agentctl-v<版>` を push すると、`.github/workflows/agentctl-release.yml` がテストを通してから 6 種類のバイナリ (linux / darwin / windows × amd64 / arm64) と `checksums.txt` を作り、リリースに添付します。
+
+```sh
+git tag agentctl-v0.1.0 && git push origin agentctl-v0.1.0
+```
 
 ### 1.2 Claude 側 (Mod)
 

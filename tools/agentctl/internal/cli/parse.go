@@ -23,6 +23,7 @@ type Globals struct {
 	JSON     bool
 	Provider session.Provider
 	Help     bool
+	Version  bool
 }
 
 // node is one level of the command tree ("sessions", "raw claude", ...).
@@ -89,6 +90,8 @@ func splitGlobals(args []string, root *node) (Globals, []string, *usageError) {
 			g.JSON = true
 		case a == "-h" || a == "--help":
 			g.Help = true
+		case a == "--version":
+			g.Version = true
 		case a == "--provider" || strings.HasPrefix(a, "--provider="):
 			v, ok := strings.CutPrefix(a, "--provider=")
 			if !ok {
