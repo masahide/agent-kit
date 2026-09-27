@@ -201,6 +201,9 @@ func TestResolve(t *testing.T) {
 	if r.code != 3 || out.Error.Code != session.CodeAmbiguousID || len(out.Error.Candidates) != 2 {
 		t.Fatalf("ambiguous: %d %s", r.code, r.stdout)
 	}
+	if out.Error.Candidates[0].State != session.Running || !strings.Contains(out.Error.Hint, "use 3f746262 as the id") {
+		t.Errorf("the running candidate comes first and the hint names its unique prefix: %+v", out.Error)
+	}
 	if r := run(t, ad, "", "--json", "sessions", "get", "3f74"); r.code != 0 || !strings.Contains(r.stdout, `"id": "3f746262-1811-5237-9497-992c2b8dd58a"`) {
 		t.Fatalf("unique prefix: %d %s", r.code, r.stdout)
 	}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -158,7 +159,7 @@ func (c *Ctx) writeError(err error) int {
 	}
 	fmt.Fprintf(c.Stderr, "error: %s\n", e.Message)
 	for _, cand := range e.Candidates {
-		fmt.Fprintf(c.Stderr, "  %s  %s  %s\n", cand.ID, cand.Provider, cand.Cwd)
+		fmt.Fprintf(c.Stderr, "  %s  %-6s  %-8s  %s\n", cand.ID, cand.Provider, cand.State, cand.Cwd)
 	}
 	if e.Action != nil {
 		writeAction(c.Stderr, e.Action)
@@ -374,19 +375,67 @@ func (c *Ctx) resolve(arg string) (session.Adapter, session.Session, error) {
 	case 1:
 		return c.adapter(matches[0].Provider), matches[0], nil
 	}
+	// Running sessions first, then the most recently updated: the one meant is
+	// usually near the top.
+	sort.SliceStable(matches, func(i, j int) bool {
+		li, lj := matches[i].State.Live(), matches[j].State.Live()
+		if li != lj {
+			return li
+		}
+		return laterTime(matches[i].UpdatedAt, matches[j].UpdatedAt)
+	})
 	e := session.Errf(session.CodeAmbiguousID, "%s matches %d sessions", arg, len(matches)).
-		WithHint("use a longer prefix or --provider")
+		WithHint("use a longer prefix (Codex ids start with their creation time, so copy the whole ID column of agentctl ps) or --provider")
+	var live []session.Session
 	for _, m := range matches {
-		e.Candidates = append(e.Candidates, session.Candidate{ID: m.ID, Provider: m.Provider, Cwd: m.Cwd, Title: m.Title})
+		e.Candidates = append(e.Candidates, session.Candidate{ID: m.ID, Provider: m.Provider, State: m.State, Cwd: m.Cwd, Title: m.Title})
+		if m.State.Live() {
+			live = append(live, m)
+		}
+	}
+	if len(live) == 1 {
+		e.WithHint("only one of them is running: use %s as the id", uniquePrefix(live[0].ID, matches))
 	}
 	return nil, session.Session{}, e
 }
 
-// get re-reads a session after a write.
-func (c *Ctx) get(a session.Adapter, id string) session.Session {
-	d, err := a.Get(c, id)
+// uniquePrefix is the shortest prefix of id (at least 8 characters) that no
+// other session in others starts with.
+func uniquePrefix(id string, others []session.Session) string {
+	for n := 8; n < len(id); n++ {
+		p := id[:n]
+		if strings.HasSuffix(p, "-") {
+			continue
+		}
+		clash := false
+		for _, o := range others {
+			if o.ID != id && strings.HasPrefix(o.ID, p) {
+				clash = true
+				break
+			}
+		}
+		if !clash {
+			return p
+		}
+	}
+	return id
+}
+
+func laterTime(x, y *time.Time) bool {
+	switch {
+	case x == nil:
+		return false
+	case y == nil:
+		return true
+	}
+	return x.After(*y)
+}
+
+// get re-reads s after a write; if that fails it returns s as it was known.
+func (c *Ctx) get(a session.Adapter, s session.Session) session.Session {
+	d, err := a.Get(c, s.ID)
 	if err != nil {
-		return session.Session{ID: id, Provider: a.Provider()}
+		return s
 	}
 	return d.Session
 }
@@ -616,7 +665,7 @@ func runCreate(c *Ctx, in *Input) (any, error) {
 			return nil, err
 		}
 		res["delivery"] = d
-		res["session"] = c.get(a, s.ID)
+		res["session"] = c.get(a, s)
 	}
 	return res, nil
 }
@@ -673,7 +722,7 @@ func runSend(c *Ctx, in *Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"session": c.get(a, s.ID), "delivery": d, "next": nextAfterWrite(s.ID)}, nil
+	return map[string]any{"session": c.get(a, s), "delivery": d, "next": nextAfterWrite(s.ID)}, nil
 }
 
 func runStop(c *Ctx, in *Input) (any, error) {
@@ -686,7 +735,7 @@ func runStop(c *Ctx, in *Input) (any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"session": c.get(a, s.ID), "turnInterrupted": r.TurnInterrupted,
+		"session": c.get(a, s), "turnInterrupted": r.TurnInterrupted,
 		"processStopped": r.ProcessStopped, "hint": r.Hint,
 	}, nil
 }

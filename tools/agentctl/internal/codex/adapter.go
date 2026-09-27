@@ -187,11 +187,12 @@ func (a *Adapter) List(ctx context.Context, q session.ListQuery) ([]session.Sess
 				return err
 			}
 			for _, id := range loaded.Data {
+				seen[id] = true
 				var r threadResp
 				if err := c.call("thread/read", map[string]any{"threadId": id}, &r); err != nil {
-					continue // unloaded meanwhile
+					out = append(out, busySession(id))
+					continue
 				}
-				seen[id] = true
 				out = append(out, toSession(r.Thread, false))
 			}
 		}
@@ -228,6 +229,10 @@ func (a *Adapter) Get(ctx context.Context, id string) (session.Detail, error) {
 	err := a.with(ctx, func(c *client) error {
 		var raw json.RawMessage
 		if err := c.call("thread/read", map[string]any{"threadId": id}, &raw); err != nil {
+			if loaded, lerr := isLoaded(c, id); lerr == nil && loaded {
+				d = session.Detail{Session: busySession(id), Raw: map[string]string{"readError": err.Error()}}
+				return nil
+			}
 			return notFoundOr(id, err)
 		}
 		var r threadResp
@@ -242,6 +247,32 @@ func (a *Adapter) Get(ctx context.Context, id string) (session.Detail, error) {
 		d.Capabilities = session.Capabilities{}
 	}
 	return d, err
+}
+
+// busySession stands for a thread the daemon has loaded but thread/read did
+// not answer for. On Windows this was seen while a turn ran; treating it as
+// running keeps `sessions wait` waiting instead of failing with not_found.
+func busySession(id string) session.Session {
+	return session.Session{
+		ID: id, Provider: session.Codex, State: session.Running,
+		Capabilities: session.Capabilities{Send: true, Interrupt: true, Stop: true},
+		Surface:      session.Ptr("codex-daemon"),
+	}
+}
+
+func isLoaded(c *client, id string) (bool, error) {
+	var loaded struct {
+		Data []string `json:"data"`
+	}
+	if err := c.call("thread/loaded/list", map[string]any{}, &loaded); err != nil {
+		return false, err
+	}
+	for _, l := range loaded.Data {
+		if l == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // isArchived looks for id among the archived threads.
@@ -424,9 +455,49 @@ func (a *Adapter) Send(ctx context.Context, id, text string) (session.Delivery, 
 			}
 		}
 		d = session.TurnStarted
-		return c.call("turn/start", map[string]any{"threadId": id, "input": textInput(text)}, nil)
+		var started struct {
+			Turn struct {
+				ID string `json:"id"`
+			} `json:"turn"`
+		}
+		if err := c.call("turn/start", map[string]any{"threadId": id, "input": textInput(text)}, &started); err != nil {
+			return err
+		}
+		return waitStarted(ctx, c, id, started.Turn.ID)
 	})
 	return d, err
+}
+
+// startWait bounds how long send waits for the daemon to mark the new turn.
+var startWait = 3 * time.Second
+
+// waitStarted gives the daemon up to startWait to report the new turn as
+// active (or already finished), so that `sessions wait --until idle` right
+// after `send` does not see the idle status from before the turn.
+func waitStarted(ctx context.Context, c *client, id, turnID string) error {
+	deadline := time.Now().Add(startWait)
+	for time.Now().Before(deadline) {
+		var r threadResp
+		if err := c.call("thread/read", map[string]any{"threadId": id}, &r); err != nil || r.Thread.Status.Type != "idle" {
+			return nil // unreadable while the turn runs (seen on Windows), or active
+		}
+		var page struct {
+			Data []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"data"`
+		}
+		if err := c.call("thread/turns/list", map[string]any{"threadId": id, "limit": 1}, &page); err == nil &&
+			len(page.Data) > 0 && page.Data[0].ID == turnID && page.Data[0].Status != "inProgress" {
+			return nil // the turn already finished
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return nil
 }
 
 func (a *Adapter) Stop(ctx context.Context, id string, turnOnly bool) (session.StopResult, error) {
