@@ -2,13 +2,10 @@ package claude
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // Record is Claude Code's own ~/.claude/sessions/<pid>.json. It is not a
@@ -51,21 +48,6 @@ func readRecords(dir string) (recs []Record, unreadable int) {
 		recs = append(recs, r)
 	}
 	return recs, unreadable
-}
-
-// processAlive reports whether pid runs and, where the platform lets us
-// check, is the same process that wrote the record (procStart is the start
-// time from /proc/<pid>/stat on Linux). A record left by a crash fails this.
-func processAlive(pid int, procStart string) bool {
-	err := syscall.Kill(pid, 0)
-	if err != nil && !errors.Is(err, syscall.EPERM) {
-		return false
-	}
-	if runtime.GOOS != "linux" || procStart == "" {
-		return true
-	}
-	got, ok := linuxStartTime(pid)
-	return !ok || got == procStart
 }
 
 // linuxStartTime returns field 22 of /proc/<pid>/stat.

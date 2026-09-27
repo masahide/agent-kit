@@ -14,7 +14,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 )
 
 // wsConn is the smallest WebSocket client the control socket needs: text
@@ -148,10 +147,4 @@ func (w *wsConn) readMessage() ([]byte, error) {
 func (w *wsConn) close() {
 	_ = w.writeFrame(0x8, []byte{0x03, 0xe8}) // 1000 normal closure
 	_ = w.c.Close()
-}
-
-// isNoSocket reports whether dialing failed because nothing listens.
-func isNoSocket(err error) bool {
-	s := err.Error()
-	return strings.Contains(s, "no such file") || strings.Contains(s, "connection refused")
 }

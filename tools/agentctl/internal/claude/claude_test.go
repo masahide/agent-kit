@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -73,6 +72,30 @@ func jsonEqual(t *testing.T, a, b []byte) bool {
 	return string(xa) == string(ya)
 }
 
+func TestModWithoutPid(t *testing.T) {
+	e := newEnv(t)
+	r := Record{PID: 1, SessionID: idA, Cwd: "/w/a", Status: "idle", StartedAt: 1000}
+	e.record(r)
+	e.write(e.a.store.modPath(idA), ModFile{V: 1, SessionID: idA, PID: 0, StartedAt: 1500})
+	if !e.a.modOK(r) {
+		t.Error("pid 0 (no sh, as on Windows) with a mod.json written after the process started counts")
+	}
+	e.write(e.a.store.modPath(idA), ModFile{V: 1, SessionID: idA, PID: 0, StartedAt: 500})
+	if e.a.modOK(r) {
+		t.Error("a mod.json from before the process started is stale")
+	}
+}
+
+func TestStopDoesNotEndTheProcessWhereItCannot(t *testing.T) {
+	e := newEnv(t)
+	e.a.CanTerminate = false
+	e.record(Record{PID: 1, SessionID: idA, Cwd: "/w/a", Status: "idle"})
+	r, err := e.a.Stop(context.Background(), idA, false)
+	if err != nil || r.ProcessStopped || len(e.kills) != 0 || !strings.Contains(r.Hint, "Windows") {
+		t.Fatalf("%+v %v", r, err)
+	}
+}
+
 func TestLinuxStartTimeMatchesOwnProcess(t *testing.T) {
 	st, ok := linuxStartTime(os.Getpid())
 	if !ok {
@@ -119,7 +142,8 @@ func newEnv(t *testing.T) *env {
 	e := &env{t: t, alive: map[int]bool{}, now: time.UnixMilli(1790498000000)}
 	a := New(home)
 	a.Alive = func(pid int, _ string) bool { return e.alive[pid] }
-	a.Kill = func(pid int, sig syscall.Signal) error {
+	a.CanTerminate = true
+	a.Terminate = func(pid int) error {
 		e.kills = append(e.kills, pid)
 		e.alive[pid] = false
 		return nil
