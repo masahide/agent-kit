@@ -152,6 +152,12 @@ func parse(args []string, root *node) (*parsed, *usageError) {
 			for _, s := range closest(tok, n.childNames()) {
 				u.err.Suggestions = append(u.err.Suggestions, strings.TrimSpace(strings.Join(append(append([]string{}, n.path...), s), " ")))
 			}
+			// `agentctl messages` is most likely `agentctl sessions messages`.
+			if sessions, ok := n.children["sessions"]; ok && n == root {
+				for _, s := range closest(tok, sessions.childNames()) {
+					u.err.Suggestions = append(u.err.Suggestions, "sessions "+s)
+				}
+			}
 			return nil, u
 		}
 		n = child

@@ -157,6 +157,7 @@ func TestArgumentErrorsShowHelp(t *testing.T) {
 	}{
 		{[]string{"sesions", "list"}, "agentctl - list and drive", "sessions"},
 		{[]string{"sessions", "lsit"}, "Usage: agentctl sessions <command>", "sessions list"},
+		{[]string{"messages", "3f74"}, "agentctl - list and drive", "sessions messages"},
 		{[]string{"sessions", "send", "3f74", "--txt", "hi"}, "Usage: agentctl sessions send", "--text"},
 		{[]string{"sessions", "send", "3f74"}, "Usage: agentctl sessions send", ""},
 		{[]string{"sessions", "get"}, "Usage: agentctl sessions get", ""},
