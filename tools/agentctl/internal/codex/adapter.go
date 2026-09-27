@@ -187,11 +187,12 @@ func (a *Adapter) List(ctx context.Context, q session.ListQuery) ([]session.Sess
 				return err
 			}
 			for _, id := range loaded.Data {
+				seen[id] = true
 				var r threadResp
 				if err := c.call("thread/read", map[string]any{"threadId": id}, &r); err != nil {
-					continue // unloaded meanwhile
+					out = append(out, busySession(id))
+					continue
 				}
-				seen[id] = true
 				out = append(out, toSession(r.Thread, false))
 			}
 		}
@@ -228,6 +229,10 @@ func (a *Adapter) Get(ctx context.Context, id string) (session.Detail, error) {
 	err := a.with(ctx, func(c *client) error {
 		var raw json.RawMessage
 		if err := c.call("thread/read", map[string]any{"threadId": id}, &raw); err != nil {
+			if loaded, lerr := isLoaded(c, id); lerr == nil && loaded {
+				d = session.Detail{Session: busySession(id), Raw: map[string]string{"readError": err.Error()}}
+				return nil
+			}
 			return notFoundOr(id, err)
 		}
 		var r threadResp
@@ -242,6 +247,32 @@ func (a *Adapter) Get(ctx context.Context, id string) (session.Detail, error) {
 		d.Capabilities = session.Capabilities{}
 	}
 	return d, err
+}
+
+// busySession stands for a thread the daemon has loaded but thread/read did
+// not answer for. On Windows this was seen while a turn ran; treating it as
+// running keeps `sessions wait` waiting instead of failing with not_found.
+func busySession(id string) session.Session {
+	return session.Session{
+		ID: id, Provider: session.Codex, State: session.Running,
+		Capabilities: session.Capabilities{Send: true, Interrupt: true, Stop: true},
+		Surface:      session.Ptr("codex-daemon"),
+	}
+}
+
+func isLoaded(c *client, id string) (bool, error) {
+	var loaded struct {
+		Data []string `json:"data"`
+	}
+	if err := c.call("thread/loaded/list", map[string]any{}, &loaded); err != nil {
+		return false, err
+	}
+	for _, l := range loaded.Data {
+		if l == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // isArchived looks for id among the archived threads.

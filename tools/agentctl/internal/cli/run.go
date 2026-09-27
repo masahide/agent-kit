@@ -431,11 +431,11 @@ func laterTime(x, y *time.Time) bool {
 	return x.After(*y)
 }
 
-// get re-reads a session after a write.
-func (c *Ctx) get(a session.Adapter, id string) session.Session {
-	d, err := a.Get(c, id)
+// get re-reads s after a write; if that fails it returns s as it was known.
+func (c *Ctx) get(a session.Adapter, s session.Session) session.Session {
+	d, err := a.Get(c, s.ID)
 	if err != nil {
-		return session.Session{ID: id, Provider: a.Provider()}
+		return s
 	}
 	return d.Session
 }
@@ -665,7 +665,7 @@ func runCreate(c *Ctx, in *Input) (any, error) {
 			return nil, err
 		}
 		res["delivery"] = d
-		res["session"] = c.get(a, s.ID)
+		res["session"] = c.get(a, s)
 	}
 	return res, nil
 }
@@ -722,7 +722,7 @@ func runSend(c *Ctx, in *Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"session": c.get(a, s.ID), "delivery": d, "next": nextAfterWrite(s.ID)}, nil
+	return map[string]any{"session": c.get(a, s), "delivery": d, "next": nextAfterWrite(s.ID)}, nil
 }
 
 func runStop(c *Ctx, in *Input) (any, error) {
@@ -735,7 +735,7 @@ func runStop(c *Ctx, in *Input) (any, error) {
 		return nil, err
 	}
 	return map[string]any{
-		"session": c.get(a, s.ID), "turnInterrupted": r.TurnInterrupted,
+		"session": c.get(a, s), "turnInterrupted": r.TurnInterrupted,
 		"processStopped": r.ProcessStopped, "hint": r.Hint,
 	}, nil
 }

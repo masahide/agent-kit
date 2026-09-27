@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -258,5 +259,33 @@ func TestErrors(t *testing.T) {
 	gone := &Adapter{Socket: filepath.Join(t.TempDir(), "none.sock")}
 	if _, _, err := gone.List(context.Background(), session.ListQuery{}); !errors.As(err, &se) || se.Code != session.CodeProviderUnavailable {
 		t.Fatalf("no daemon: %v", err)
+	}
+}
+
+func TestLoadedThreadThatCannotBeReadIsRunning(t *testing.T) {
+	d := fakeDaemon(t, func(m string, p map[string]any) (any, *RPCError) {
+		switch m {
+		case "thread/loaded/list":
+			return map[string]any{"data": []string{tid}}, nil
+		case "thread/read":
+			return nil, &RPCError{Code: -32603, Message: "rollout is being written"}
+		}
+		return nil, &RPCError{Code: -32601, Message: "unknown"}
+	})
+	a := &Adapter{Socket: d.socket}
+	items, _, err := a.List(context.Background(), session.ListQuery{})
+	if err != nil || len(items) != 1 || items[0].State != session.Running {
+		t.Fatalf("list: %+v %v", items, err)
+	}
+	got, err := a.Get(context.Background(), tid)
+	if err != nil || got.State != session.Running {
+		t.Fatalf("get: %+v %v", got, err)
+	}
+	if raw, _ := json.Marshal(got.Raw); !strings.Contains(string(raw), "rollout is being written") {
+		t.Errorf("the read error is kept in raw: %s", raw)
+	}
+	var se *session.Error
+	if _, err := a.Get(context.Background(), "not-loaded"); !errors.As(err, &se) {
+		t.Fatalf("a thread that is not loaded still fails: %v", err)
 	}
 }
