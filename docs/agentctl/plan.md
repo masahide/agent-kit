@@ -566,7 +566,7 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 | C2 | Mod の fs が cwd の外に届くか | 届く。`$.fs.list` は `{ name, kind, size, isLink }` の配列、`$.fs.write` は親ディレクトリも作る。`sh -c 'echo $PPID'` で claude の PID も取れた |
 | C3 | `$.prompt.submit` の idle / busy | idle: 直ちに turn が始まる。busy: 今の turn が終わった直後 (約 10 ms) に次の turn として始まる。どちらも Promise は turn が始まってから `{ text, origin }` で返る。→ Mod は busy のとき先に `queued` の ack を書き、始まったら `submitted` に書き換える |
 | C3b | `$.turn.abort` | 実行中なら止まり、`turn.complete` の `reason` が `aborted`、記録の `status` が `idle` に戻る。実行中でなければ「no turn is running」で throw する → ack は `no_turn` |
-| C4 | Claude Desktop | 未確認 (この環境に無い)。段階 6 で手元の機械で確かめる |
+| C4 | Claude Desktop | 確認済み (2026-09-27、Windows。下の「Windows での確認」) |
 | C5 | codex TUI の thread を操作できるか | 未確認 (TUI がログインを求める)。daemon の上で agentctl が作った thread は、`thread/loaded/list` / `turn/start` / `turn/steer` / `turn/interrupt` / `thread/archive` / `thread/delete` がすべて通った |
 | C6 | 実行中の turn の ID | `thread/turns/list { limit: 1 }` (既定で新しい順) の先頭が `inProgress` ならその ID。`turn/steer` は `expectedTurnId` が違えば `-32600`、実行中の turn が無ければ「no active turn to steer」 |
 | C7 | `thread/unsubscribe` で降ろせるか | 降りない (読み込まれたまま)。`thread/archive` は実行中の turn を止めて `notLoaded` にする。→ Codex の `stop` は `turn/interrupt` だけにする |
@@ -577,7 +577,8 @@ Windows での確認 (2026-09-27、Windows、Claude Code 2.1.280、Claude Deskto
 - `sessions list` が Claude Desktop のセッション (`surface: desktop`、題名は `ai-title`) と terminal のセッションを出した。
 - terminal のセッションで Mod が読み込まれ (`CLAUDE_CODE_PLUGIN_DIRS` に `;` 区切りで追加)、`send` → `wait` → `messages` が通った。
 - 見つけて直したこと: Git for Windows があると Mod の `sh -c 'echo $PPID'` が MSYS の pid を返し、記録の pid と一致しないので Mod なしと判定していた (0.1.1 で、`mod.json` がプロセスの起動より後なら Mod ありとみなすよう直した)。
-- 残り: Claude Desktop のセッションでの Mod の読み込み (C4)、codex (この機械には未導入)。
+- Claude Desktop のセッションでも Mod が読み込まれ (C4 を確認)、`send` した文が user turn として届き、Claude の答えを `messages` で読めた。settings.json の `env` (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`、`CLAUDE_CODE_PLUGIN_DIRS`) は Desktop のセッションにも効く。Mod は起動した後のセッションにしか読み込まれない (起動済みのセッションは開き直す)。
+- 残り: codex の TUI (C5。この機械には codex が未導入)。
 
 ほかに分かったこと:
 
