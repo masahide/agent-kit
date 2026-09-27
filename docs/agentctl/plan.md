@@ -1,6 +1,6 @@
 # agentctl 実装計画書 (MVP)
 
-作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
+作成日: 2026-09-27 / 更新: 2026-09-27 (Claude の一覧を Claude Code 本体の `~/.claude/sessions/<pid>.json` から読む形に変え、Mod を受信箱専用にした。引数の誤りでヘルプを出し、コマンドごとのヘルプを持たせた (3.2)。Claude のプロセスは agentctl が起動せず、人が起動した terminal / Claude Desktop / VS Code のセッションを使う形にし、tmux をやめた (2.3)。開発原則 (YAGNI) を足した。CLI の実装言語を Go にした (4 章)。CLI を agent が使いやすい形 ([agent-cli-patterns](https://github.com/openai/skills/blob/main/skills/.curated/cli-creator/references/agent-cli-patterns.md)) に作り直した) / 状態: 計画 (未着手)。7 章の未確認点を段階 0 で確かめてから段階 1 に入ります
 
 ## 要点
 
@@ -10,7 +10,7 @@
 - Claude のプロセスは agentctl が起動しません。人が terminal、Claude Desktop、VS Code で起動したセッションをそのまま使います。対象のセッションが動いていなければ、どこで何を起動すればよいかを返し、人に起動してもらいます (2.3)。
 - Codex は、Codex の共有 app-server daemon に `codex app-server proxy` 経由でつなぎ、JSON-RPC (`thread/*`, `turn/*`) を呼びます。Codex の TUI も既定でこの daemon を使うので、人が起動した TUI のセッションも操作できます。
 - 両者の差は `Adapter` という 1 つの interface で吸収します。
-- CLI は依存ゼロの TypeScript を Node 22 の型除去で直接動かします (ビルド無し)。常駐の agentctl daemon は作りません。
+- CLI は Go で書き、単一のバイナリにします。外部のパッケージは使わず、標準ライブラリだけで作ります。Mod は TypeScript です (Mod は TypeScript でしか書けないため)。常駐の agentctl daemon は作りません。
 
 ## 開発原則
 
@@ -27,7 +27,7 @@ YAGNI (You Aren't Gonna Need It) の原則に従って実装します。いま�
 |---|---|
 | provider | `claude` か `codex`。セッションを動かしている側です |
 | セッション | Claude では session (`sessionId`)、Codex では thread (`threadId`) です。agentctl では両方を「セッション」と呼び、ID は元の ID をそのまま使います |
-| adapter | provider ごとの差を吸収する実装です。`src/adapters/claude.ts` と `src/adapters/codex.ts` の 2 つです |
+| adapter | provider ごとの差を吸収する実装です。`internal/claude` と `internal/codex` の 2 つです |
 | セッション記録 | Claude Code 本体が稼働中のセッションごとに書く `~/.claude/sessions/<pid>.json` です。公開された形式ではありません |
 | 共有ディレクトリ | `${AGENTCTL_HOME:-~/.agentctl}`。Claude の Mod と CLI がファイルでやり取りする場所と、agentctl が付けた名前やアーカイブの印を置きます |
 | 起動元 (surface) | Claude のセッションがどこで動いているか。`desktop` (Claude Desktop)、`vscode`、`tmux`、`terminal` の 4 つで、本体がセッション記録の `entrypoint` と `tmux` から決めるのと同じ分け方です |
@@ -138,39 +138,48 @@ heartbeat は持ちません。生存はセッション記録の `pid` と `proc
 
 ### 2.2 共通の型と Adapter
 
-```ts
-type Provider = 'claude' | 'codex'
-type State = 'running' | 'waiting' | 'idle' | 'stopped' | 'archived' | 'error'
+```go
+type Provider string // "claude" | "codex"
+type State string    // "running" | "waiting" | "idle" | "stopped" | "archived" | "error"
 
-type Session = {
-  id: string; provider: Provider; state: State
-  cwd: string; title: string | null
-  createdAt: string; updatedAt: string          // ISO 8601
-  capabilities: { send: boolean; interrupt: boolean; stop: boolean }
-  waitingFor: string | null                    // 権限の確認待ちなど
-  surface: 'desktop' | 'vscode' | 'tmux' | 'terminal' | 'codex-daemon' | null  // 止まっていれば null
-  process: { pid: number | null }
+type Session struct {
+	ID           string       `json:"id"`
+	Provider     Provider     `json:"provider"`
+	State        State        `json:"state"`
+	Cwd          string       `json:"cwd"`
+	Title        *string      `json:"title"`
+	CreatedAt    time.Time    `json:"createdAt"`
+	UpdatedAt    time.Time    `json:"updatedAt"`
+	Capabilities Capabilities `json:"capabilities"` // send, interrupt, stop
+	WaitingFor   *string      `json:"waitingFor"`   // 権限の確認待ちなど
+	Surface      *string      `json:"surface"`      // desktop | vscode | tmux | terminal | codex-daemon。止まっていれば null
+	Process      Process      `json:"process"`      // pid (無ければ null)
 }
 
-type Message = { id: string; role: 'user' | 'assistant' | 'tool'; text: string; at: string }
+type Message struct {
+	ID   string    `json:"id"`
+	Role string    `json:"role"` // user | assistant | tool
+	Text string    `json:"text"`
+	At   time.Time `json:"at"`
+}
 
-interface Adapter {
-  provider: Provider
-  list(q: { all: boolean; cwd?: string; limit: number; cursor?: string }): Promise<{ items: Session[]; nextCursor: string | null }>
-  get(id: string): Promise<Session & { raw: unknown }>
-  messages(id: string, q: { last: number }): Promise<Message[]>
-  // Claude は起動せず、人への依頼 (StartRequest) を返す。Codex は Session を返す
-  create(dir: string, o: { prompt?: string; name?: string; args: string[] }): Promise<Session | StartRequest>
-  resume(id: string): Promise<Session | StartRequest>
-  send(id: string, text: string): Promise<{ delivery: 'turn_started' | 'steered' | 'submitted' | 'queued' }>
-  stop(id: string, o: { turnOnly: boolean }): Promise<void>
-  archive(id: string): Promise<void>
-  delete(id: string): Promise<void>
-  raw(method: string, params: unknown): Promise<unknown>
+type Adapter interface {
+	Provider() Provider
+	List(ctx context.Context, q ListQuery) (items []Session, nextCursor *string, err error)
+	Get(ctx context.Context, id string) (Detail, error) // Session + raw (provider の元データ)
+	Messages(ctx context.Context, id string, last int) ([]Message, error)
+	// Claude は起動せず、人への依頼 (*StartRequest を包んだ error) を返す。Codex は Session を返す
+	Create(ctx context.Context, dir string, o CreateOptions) (Session, error)
+	Resume(ctx context.Context, id string) (Session, error)
+	Send(ctx context.Context, id, text string) (Delivery, error) // turn_started | steered | submitted | queued
+	Stop(ctx context.Context, id string, turnOnly bool) (stopped bool, err error)
+	Archive(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string) error
+	Raw(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error)
 }
 ```
 
-`StartRequest` は `{ provider, dir, sessionId?, instructions: { desktop, terminal, vscode }, detect: { cwd, sessionId?, after } }` で、人に見せる手順と、起動を見つけるための条件です (2.3)。
+`StartRequest` は `{ provider, dir, sessionId, instructions: { desktop, terminal, vscode }, detect: { cwd, sessionId, after } }` で、人に見せる手順と、起動を見つけるための条件です (2.3)。adapter はこれを `error` として返し、CLI 本体が `user_action_required` の出力と `--wait` に変えます。
 
 `wait` は adapter に持たせず、CLI 本体が `get` を 1 秒ごとに呼んで状態を見ます (provider ごとの実装が要らない)。
 
@@ -334,7 +343,7 @@ Exit codes: 0 ok, 2 bad arguments, 3 not found/ambiguous, 4 unsupported (no Mod)
 - `agentctl --json help sessions send` は、ヘルプを JSON (`{ command, usage, description, args, flags, examples, output, exitCodes, isWrite }`) で返します。agent が書式を機械的に確かめたいとき用です。
 - 実行時の失敗 (`not_found`, `provider_error` など) ではヘルプを出しません。引数は正しいので、ヘルプを出すと本当の原因が埋もれるからです。代わりに `hint` で次のコマンドを示します。
 
-作り方: コマンドの定義 (名前、説明、引数、フラグ、例、出力の形、書き込みかどうか) を `src/commands.ts` に 1 つの表として持ち、引数解析、検査、ヘルプの文、`help --json` をすべてこの表から作ります。ヘルプと実際の挙動がずれないようにするためです。
+作り方: コマンドの定義 (名前、説明、引数、フラグ、例、出力の形、書き込みかどうか) を `internal/cli/commands.go` に 1 つの表 (構造体のスライス) として持ち、引数解析、検査、ヘルプの文、`help --json` をすべてこの表から作ります。ヘルプと実際の挙動がずれないようにするためです。
 
 ### 3.3 ID と解決
 
@@ -456,33 +465,37 @@ plugins/agentctl/                 Claude Mod (受信箱) と付属スキル
   .claude-plugin/plugin.json
   hooks/hooks.json
   hooks/register.ts               session.start (mod.json)、turn.start (turnId)、受信箱の監視
-  hooks/protocol.ts               共有ディレクトリのファイル形式と定数 (CLI も import する)
+  hooks/protocol.ts               共有ディレクトリのファイル形式と定数 (CLI の protocol.go と同じ形)
   hooks/inbox.ts                  受信箱の処理 (純関数。テストしやすくする)
   skills/agentctl/SKILL.md        付属スキル (3.9)
   tests/register.test.ts          claude plugin test
+  tests/fixtures/protocol/*.json  共有ディレクトリのファイルの見本 (CLI の Go のテストも読む)
   README.md
-tools/agentctl/                   CLI
-  package.json                    "type": "module"、"bin"、依存なし
-  bin/agentctl                    #!/usr/bin/env node → src/main.ts を読むだけ
-  src/main.ts                     引数解析、コマンドの振り分け
-  src/commands.ts                 コマンドの定義の表 (引数解析、検査、ヘルプの元。3.2)
-  src/help.ts                     表からヘルプの文と help --json を作る、近い候補の計算
-  src/output.ts                   JSON / 表の出し分け、エラーの形、終了コード
-  src/session.ts                  共通の型、Adapter interface、ID の解決
-  src/wait.ts                     sessions wait
-  src/adapters/claude.ts
-  src/adapters/codex.ts
-  src/claude/records.ts           ~/.claude/sessions と transcript の読み取り、生存判定
-  src/claude/inbox.ts             共有ディレクトリの読み書き (atomic write、掃除)
-  src/claude/start-request.ts     人への依頼 (手順の文と、起動を見つける条件) と --wait
-  src/codex/rpc.ts                `codex app-server proxy` 越しの JSON-RPC クライアント
-  test/*.test.ts                  node --test
+tools/agentctl/                   CLI (Go、module は github.com/masahide/agent-kit/tools/agentctl)
+  go.mod                          標準ライブラリだけ。require は持たない
+  main.go                         cli.Run(os.Args, stdout, stderr) を呼んで終了コードを返すだけ
+  internal/cli/commands.go        コマンドの定義の表 (引数解析、検査、ヘルプの元。3.2)
+  internal/cli/parse.go           表から flag.FlagSet を組む、引数の検査
+  internal/cli/help.go            各階層のヘルプの文、help --json、近い候補 (編集距離)
+  internal/cli/output.go          JSON / 表の出し分け、エラーの形、終了コード
+  internal/cli/run.go             コマンドの振り分け、ID の解決、sessions wait
+  internal/session/session.go     共通の型と Adapter interface
+  internal/claude/adapter.go
+  internal/claude/records.go      ~/.claude/sessions と transcript の読み取り、生存判定
+  internal/claude/inbox.go        共有ディレクトリの読み書き (atomic write、掃除)
+  internal/claude/protocol.go     共有ディレクトリのファイル形式 (Mod の protocol.ts と同じ形)
+  internal/claude/start.go        人への依頼 (手順の文と、起動を見つける条件)
+  internal/codex/adapter.go
+  internal/codex/rpc.go           `codex app-server proxy` 越しの JSON-RPC クライアント
+  internal/*/..._test.go          go test
 docs/agentctl/plan.md             この文書
 docs/agentctl/usage.md            利用者ガイド (段階 6)
 ```
 
-- CLI は Node 22.18 以降の型除去 (`node src/main.ts`) で動かします。enum と namespace を使わない、import に `.ts` を付ける、の 2 点を守ります。
-- `protocol.ts` は Mod 側に置き、CLI は `../../../plugins/agentctl/hooks/protocol.ts` を相対 import します。Mod から plugin の外を import できるかが不確かなので、向きを CLI → Mod にします。
+- CLI は Go 1.24 以降で書き、`go build` で単一のバイナリにします。引数の解析は標準の `flag` を使い、cobra などの外部パッケージは使いません (YAGNI)。
+- 配るのは `go install github.com/masahide/agent-kit/tools/agentctl@latest` だけにします。リリース用のバイナリの配布は、必要になってから考えます。
+- 共有ディレクトリのファイル形式は、Mod の `hooks/protocol.ts` と CLI の `internal/claude/protocol.go` に 2 回書くことになります。ずれを防ぐため、見本の JSON を Mod 側の `plugins/agentctl/tests/fixtures/protocol/` に置き、Mod のテストと Go のテスト (リポジトリの相対パスで読む) の両方がそれを読んで、自分の型で読み書きできることを確かめます。Mod のテストが plugin の外を読めるとは限らないので、置き場を Mod 側にします。形を変えるときは見本から直します。
+- 共有ディレクトリのファイル形式に `v: 1` を持たせ、読み手は知らない `v` を読まずにエラーにします。
 
 ## 5. 実装手順
 
@@ -494,13 +507,13 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 1: CLI の骨組み
 
-- `commands.ts` の定義の表、`main.ts` の引数解析 (`node:util` の `parseArgs` を表から組む)、`help.ts` (各階層のヘルプ、近い候補、`help --json`)、`output.ts` (JSON とエラーの形、終了コード)、`session.ts` (型と ID の解決)、`wait.ts`。
+- `go.mod` と `main.go`、`internal/cli` (定義の表、表から組む `flag.FlagSet`、各階層のヘルプと近い候補と `help --json`、JSON とエラーの形と終了コード、ID の解決、`sessions wait`)、`internal/session` (型と Adapter)。
 - 偽の adapter で `sessions list` / `get` / `resolve` / `wait`、エラーの形と終了コードをテストします。
 - ヘルプは、全コマンドで `--help` / `-h` / `help <...>` が同じ文を返すこと、引数の誤りの 4 種類 (3.2 の表) でヘルプが付いて終了コード 2 になること、`--json` のとき stdout が JSON だけで `error.usage` が入ることをテストします。
 
 ### 段階 2: Claude の読み取り
 
-- `records.ts`: セッション記録の読み取りと生存判定、transcript の列挙と末尾の読み取り。
+- `records.go`: セッション記録の読み取りと生存判定、transcript の列挙と末尾の読み取り。
 - `doctor`、`sessions list` / `get` / `messages` / `resolve`、`raw claude record` を Claude につなぎます。Mod はまだ要りません。
 
 ### 段階 3: Claude Mod と送信
@@ -511,14 +524,14 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 ### 段階 4: Claude の lifecycle
 
-- `start-request.ts` と `sessions create` / `resume` (起動済みの再利用、人への依頼、`--wait`)、`stop` (起動元ごとの扱い)、`archive` / `delete`。
+- `start.go` と `sessions create` / `resume` (起動済みの再利用、人への依頼、`--wait`)、`stop` (起動元ごとの扱い)、`archive` / `delete`。
 - Desktop と terminal の両方で、人が起動したセッションを `--wait` が拾うことを実機で確かめます。
 
 ### 段階 5: Codex adapter
 
-- `rpc.ts`: `codex app-server proxy` を子として起動し、`initialize` → `initialized` → 要求 → 終了。行区切りの JSON で、ID の対応と通知の読み捨てだけを持つ小さなクライアントにします。つながらなければ `codex app-server daemon start` を 1 回呼んで再試行します。
+- `rpc.go`: `codex app-server proxy` を `os/exec` で子として起動し、`initialize` → `initialized` → 要求 → 終了。行区切りの JSON で、ID の対応と通知の読み捨てだけを持つ小さなクライアントにします。つながらなければ `codex app-server daemon start` を 1 回呼んで再試行します。
 - `doctor` から `raw codex` まで、全コマンドを 1 つずつ。
-- テストは、JSON-RPC を返す偽の proxy (小さな node スクリプト) を `AGENTCTL_CODEX_PROXY` で差し替えて行います。
+- テストは、JSON-RPC を返す偽の proxy を `AGENTCTL_CODEX_PROXY` で差し替えて行います。偽の proxy はテストのバイナリ自身を別の役で起動する形 (`os.Args[0]` と環境変数で切り替える、Go の標準のやり方) にし、スクリプトを別に持ちません。
 
 ### 段階 6: 仕上げ
 
@@ -529,15 +542,16 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 ### テストの方針
 
 - Mod: `claude plugin test` (doc-desk と同じ `claude-code/testing`)。受信箱の処理は純関数に切り出して単体で試します。
-- CLI: `node --test`。`HOME` を一時ディレクトリにして、セッション記録と transcript と Mod が書くファイルを fixture で置きます。シグナルは薄い関数に閉じ込めて差し替えます。`--wait` は、待っている間に fixture のセッション記録を足して確かめます。
+- CLI: `go test ./...`。`HOME` を `t.TempDir()` にして、セッション記録と transcript と Mod が書くファイルを fixture で置きます。シグナルは薄い関数に閉じ込めて差し替えます。`--wait` は、待っている間に fixture のセッション記録を足して確かめます。
 - 全コマンドについて、`--json` の stdout が JSON として読めること、stderr に JSON が混ざらないことを確かめます。
-- 型検査: `npx -y -p typescript tsc --noEmit` を両方に。
+- 静的検査: CLI は `gofmt -l` (差分なし) と `go vet ./...`。Mod は `npx -y -p typescript tsc --noEmit`。
+- 共有ディレクトリの見本 (`plugins/agentctl/tests/fixtures/protocol/*.json`) を、Go のテストと Mod のテストの両方で読みます (4 章)。
 
 ## 6. セッション記録を使う危うさと対策
 
 `~/.claude/sessions/<pid>.json` は公開された形式ではないので、Claude Code の更新で形が変わるおそれがあります。
 
-- 読むのは `records.ts` の 1 か所だけにし、必須の項目は `pid` と `sessionId` と `cwd` に絞ります。ほかの項目は無ければ `null` にします。
+- 読むのは `records.go` の 1 か所だけにし、必須の項目は `pid` と `sessionId` と `cwd` に絞ります。ほかの項目は無ければ `null` にします。
 - 読めない記録は飛ばし、`doctor` に「読めない記録が N 件ある (Claude Code <version>)」と出します。
 - `kind` が `interactive` 以外 (subagent や背景の job など) の扱いは C1 で確かめ、MVP では一覧から外します。
 
