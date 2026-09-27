@@ -577,7 +577,7 @@ Windows での確認 (2026-09-27、Windows、Claude Code 2.1.280、Claude Deskto
 - `sessions list` が Claude Desktop のセッション (`surface: desktop`、題名は `ai-title`) と terminal のセッションを出した。
 - terminal のセッションで Mod が読み込まれ (`CLAUDE_CODE_PLUGIN_DIRS` に `;` 区切りで追加)、`send` → `wait` → `messages` が通った。
 - 見つけて直したこと: Git for Windows があると Mod の `sh -c 'echo $PPID'` が MSYS の pid を返し、記録の pid と一致しないので Mod なしと判定していた (0.1.1 で、`mod.json` がプロセスの起動より後なら Mod ありとみなすよう直した)。
-- Claude Desktop のセッションでも Mod が読み込まれ (C4 を確認)、`send` した文が user turn として届き、Claude の答えを `messages` で読めた。settings.json の `env` (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`、`CLAUDE_CODE_PLUGIN_DIRS`) は Desktop のセッションにも効く。Mod は起動した後のセッションにしか読み込まれない (起動済みのセッションは開き直す)。
+- Claude Desktop のセッションでも Mod が読み込まれ (C4 を確認)、`send` した文が user turn として届き、Claude の答えを `messages` で読めた。Desktop の画面にも「The agentctl plugin sent a message:」付きで表示され、人が見ても agentctl から来た文だと分かる。settings.json の `env` (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`、`CLAUDE_CODE_PLUGIN_DIRS`) は Desktop のセッションにも効く。Mod は起動した後のセッションにしか読み込まれない (起動済みのセッションは開き直す)。
 - 残り: codex の TUI (C5。この機械には codex が未導入)。
 
 ほかに分かったこと:
