@@ -577,12 +577,17 @@ func runWait(c *Ctx, in *Input) (any, error) {
 		st := d.State
 		reached := st == until || (until == session.Stopped && st == session.Archived)
 		ended := until != session.Stopped && (st == session.Stopped || st == session.Errored || st == session.Archived)
+		// Waiting for a permission prompt also ends when the turn finishes without one.
+		ended = ended || (until == session.Waiting && st == session.Idle)
 		if reached || ended {
 			return map[string]any{"session": d.Session, "reached": reached}, nil
 		}
 		if !c.Now().Before(deadline) {
 			e := session.Errf(session.CodeTimeout, "session %s is still %s after %ds", s.ID, st, in.Int("timeout", 600)).
-				WithHint("wait longer with --timeout, or stop the turn: agentctl sessions stop %s --turn", s.ID)
+				WithHint("wait longer with --timeout")
+			if st == session.Running || st == session.Waiting {
+				e.WithHint("wait longer with --timeout, or stop the turn: agentctl sessions stop %s --turn", s.ID)
+			}
 			e.Detail, _ = json.Marshal(d.Session)
 			return nil, e
 		}

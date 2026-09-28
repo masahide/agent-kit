@@ -247,6 +247,11 @@ func TestSendReadsStdinAndWaitEnds(t *testing.T) {
 	if r.code != 0 || !strings.Contains(r.stdout, `"reached": true`) {
 		t.Fatalf("wait: %d %s", r.code, r.stdout)
 	}
+	cx.states = []session.State{session.Running, session.Idle}
+	r = run(t, ad, "", "--json", "sessions", "wait", "01a0e1", "--until", "waiting")
+	if r.code != 0 || !strings.Contains(r.stdout, `"reached": false`) {
+		t.Fatalf("waiting for a prompt ends when the turn finishes without one: %d %s", r.code, r.stdout)
+	}
 	cx.states = []session.State{session.Running}
 	r = run(t, ad, "", "--json", "sessions", "wait", "01a0e1", "--timeout", "3")
 	if r.code != 1 || !strings.Contains(r.stdout, session.CodeTimeout) {
