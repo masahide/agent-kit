@@ -44,7 +44,7 @@ YAGNI (You Aren't Gonna Need It) の原則に従って実装します。いま�
 
 | やりたいこと | 使うもの | 判定 |
 |---|---|---|
-| 稼働中のセッションを列挙する | Mod の API には無い (`$.session.*` は自分のセッションのことしか返さず、他のセッションを列挙する API は無い)。代わりに本体のセッション記録 `~/.claude/sessions/<pid>.json` を読む | 可。記録には `pid`, `sessionId`, `cwd`, `name`, `kind`, `status` (`busy` / `idle` など), `waitingFor`, `startedAt`, `updatedAt`, `statusUpdatedAt`, `procStart`, `version` がある。値の種類は未確認 → C1 |
+| 稼働中のセッションを列挙する | Mod の API には無い (`$.session.*` は自分のセッションのことしか返さず、他のセッションを列挙する API は無い)。代わりに本体のセッション記録 `~/.claude/sessions/<pid>.json` を読む | 可。記録には `pid`, `sessionId`, `cwd`, `name`, `kind`, `status` (`busy` / `idle` など), `waitingFor`, `startedAt`, `updatedAt`, `statusUpdatedAt`, `procStart`, `version` がある。`waitingFor` は権限の確認中に `"permission prompt"` (C1) |
 | 保存済み (止まっている) セッションを列挙する | transcript `~/.claude/projects/<cwd を変換した名前>/<sessionId>.jsonl` | 可 |
 | プロセスが生きているか、PID が使い回されていないか | セッション記録の `pid` と `procStart` を `/proc/<pid>/stat` と照合する | 可 (C1: `procStart` は `/proc/<pid>/stat` の 22 番目の値と一致。強制終了すると記録が残る) |
 | CLI からのメッセージを受ける | Mod の `$.clock.every` + `$.fs.list` + `$.fs.read` | 可 (C2: cwd の外にも届く。`$.fs.list` は `{ name, kind, size, isLink }` の配列を返す) |
@@ -187,7 +187,7 @@ type Adapter interface {
 | agentctl | Claude (セッション記録) | Codex (`Thread.status`) |
 |---|---|---|
 | `running` | `status: busy` | `active` (フラグ無し) |
-| `waiting` | `waitingFor` がある (値の種類は C1) | `active` + `waitingOnApproval` / `waitingOnUserInput` |
+| `waiting` | `waitingFor` がある (権限の確認中は `"permission prompt"`) | `active` + `waitingOnApproval` / `waitingOnUserInput` |
 | `idle` | `status: idle` | `idle` |
 | `stopped` | 記録が無い、または `pid` が死んでいる / 別のプロセスになっている。transcript だけある | `notLoaded` |
 | `archived` | `meta.json` の `archived: true` | `thread/list { archived: true }` に出るもの |
@@ -562,7 +562,7 @@ docs/agentctl/usage.md            利用者ガイド (段階 6)
 
 | 番号 | 確かめること | 結果 |
 |---|---|---|
-| C1 | セッション記録の値と生存判定 | `status` は `busy` / `idle` を確認。`procStart` は `/proc/<pid>/stat` の 22 番目 (起動時刻の clock tick) と一致。正常終了で記録は消え、`kill -9` では残る。`-p` でも `kind` は `interactive` (`entrypoint` は環境変数から継ぐ)。`waitingFor` の値は未確認 (権限の確認を出せなかった) |
+| C1 | セッション記録の値と生存判定 | `status` は `busy` / `idle` を確認。`procStart` は `/proc/<pid>/stat` の 22 番目 (起動時刻の clock tick) と一致。正常終了で記録は消え、`kill -9` では残る。`-p` でも `kind` は `interactive` (`entrypoint` は環境変数から継ぐ)。`waitingFor` は権限の確認を出している間 `"permission prompt"` (2026-09-28、Windows の Claude Desktop で確認。下の「Windows での確認」) |
 | C2 | Mod の fs が cwd の外に届くか | 届く。`$.fs.list` は `{ name, kind, size, isLink }` の配列、`$.fs.write` は親ディレクトリも作る。`sh -c 'echo $PPID'` で claude の PID も取れた |
 | C3 | `$.prompt.submit` の idle / busy | idle: 直ちに turn が始まる。busy: 今の turn が終わった直後 (約 10 ms) に次の turn として始まる。どちらも Promise は turn が始まってから `{ text, origin }` で返る。→ Mod は busy のとき先に `queued` の ack を書き、始まったら `submitted` に書き換える |
 | C3b | `$.turn.abort` | 実行中なら止まり、`turn.complete` の `reason` が `aborted`、記録の `status` が `idle` に戻る。実行中でなければ「no turn is running」で throw する → ack は `no_turn` |
@@ -580,6 +580,8 @@ Windows での確認 (2026-09-27、Windows、Claude Code 2.1.280、Claude Deskto
 - Claude Desktop のセッションでも Mod が読み込まれ (C4 を確認)、`send` した文が user turn として届き、Claude の答えを `messages` で読めた。Desktop の画面にも「The agentctl plugin sent a message:」付きで表示され、人が見ても agentctl から来た文だと分かる。settings.json の `env` (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS`、`CLAUDE_CODE_PLUGIN_DIRS`) は Desktop のセッションにも効く。Mod は起動した後のセッションにしか読み込まれない (起動済みのセッションは開き直す)。
 - Codex (CLI 0.157.1) の daemon にも Windows で Unix socket + WebSocket でつながった (`socketPath` は `%USERPROFILE%\.codex\app-server-control\app-server-control.sock`)。人が起動した codex の TUI の thread (`originator: codex-tui`) が一覧に出て、`send` (`turn_started`) した文に TUI の Codex が答え、`messages` で読めた (C5 を確認)。
 - 見つけて直したこと: turn の処理中に `thread/read` が答えず、その thread が `not_found` になり `wait` が失敗した (Windows)。daemon が読み込み済みと答える thread は、読めなくても `running` として扱う。また Codex の ID は先頭が作成時刻 (UUIDv7) なので、短い先頭では過去の thread と重なる (`01a0` が 28 件)。曖昧なときは動いている候補を先に出し、使える一意な ID を案内する。
+- `wait --until waiting` (2026-09-28、agentctl 0.1.4): Claude Desktop のセッションで、書き込む Bash コマンド (`mkdir`) の権限の確認が出ている間、記録は `waitingFor: "permission prompt"` になり `reached: true` で返った (C1)。読むだけのコマンド (`whoami` / `hostname`) は確認なしで動くので、確認を出すテストには使えない。
+- 見つけて直したこと: 確認を出さずに turn が終わると、`wait --until waiting` が timeout まで待っていた。0.1.4 で、`idle` になったら `reached: false` ですぐ返すようにした。
 
 ほかに分かったこと:
 
