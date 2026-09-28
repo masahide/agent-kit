@@ -127,7 +127,7 @@ func commands() []*Command {
 		{
 			Path: []string{"sessions", "wait"}, Group: "Wait",
 			Summary:     "wait until a session reaches a state",
-			Description: "Polls the session every second. Waiting for idle also ends when the session stops or fails; check \"reached\".",
+			Description: "Polls the session every second. Waiting for idle also ends when the session stops or fails, and waiting\nfor waiting also ends when the turn finishes without asking (idle); check \"reached\".",
 			Args:        []Arg{idArg},
 			Flags: []Flag{
 				{Name: "until", Value: "S", Help: "idle (default), stopped or waiting", Enum: []string{"idle", "stopped", "waiting"}},
